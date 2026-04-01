@@ -1,0 +1,22 @@
+# Terraform local state and cache
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+
+# Variable files with sensitive values
+*.tfvars
+*.tfvars.json
+
+# Claude Code local config
+.claude/
+
+# macOS
+.DS_Store
