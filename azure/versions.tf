@@ -16,10 +16,13 @@ terraform {
     }
   }
 
+  # Key is passed at init time via -backend-config to support multiple environments:
+  #   terraform init -reconfigure -backend-config="key=azure/dev.terraform.tfstate"
+  #   terraform init -reconfigure -backend-config="key=azure/uat.terraform.tfstate"
+  #   terraform init -reconfigure -backend-config="key=azure/prod.terraform.tfstate"
   backend "azurerm" {
     resource_group_name  = "rg-tfstate-jproject"
     storage_account_name = "stjprojecttfstate"
     container_name       = "tfstate"
-    key                  = "jproject.terraform.tfstate"
   }
 }
