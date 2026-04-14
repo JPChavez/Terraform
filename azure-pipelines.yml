@@ -1,0 +1,438 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'azure/**'
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'azure/**'
+
+variables:
+  terraformVersion: '1.7.0'
+  serviceConnection: 'azure-service-connection'        # Update with your Azure DevOps service connection name
+  backendResourceGroup: 'rg-tfstate-jproject'
+  backendStorageAccount: 'stjprojecttfstate'
+  backendContainer: 'tfstate'
+  workingDir: '$(System.DefaultWorkingDirectory)/azure'
+  approverEmail: 'jpableras.azure@gmail.com'           # Juan Pablo Chavez
+
+stages:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 1: Validate & Lint
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: Validate
+    displayName: 'Validate & Lint'
+    jobs:
+      - job: Validate
+        displayName: 'fmt · validate · tflint · checkov'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - script: terraform fmt -check -recursive
+            displayName: 'terraform fmt check'
+            workingDirectory: $(workingDir)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'azure/dev.terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform validate'
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: $(workingDir)
+
+          - script: |
+              curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+              tflint --init
+              tflint --recursive
+            displayName: 'tflint'
+            workingDirectory: $(workingDir)
+
+          - script: |
+              pip install checkov --quiet
+              checkov -d . --framework terraform --quiet --compact
+            displayName: 'checkov security scan'
+            workingDirectory: $(workingDir)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 2: Plan DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanDev
+    displayName: 'Plan - DEV'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: PlanDev
+        displayName: 'terraform plan (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'azure/dev.terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform plan (dev)'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: $(workingDir)
+              commandOptions: '-var-file="dev.tfvars" -out=dev.tfplan'
+              environmentServiceNameAzureRM: $(serviceConnection)
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish dev plan'
+            inputs:
+              targetPath: '$(workingDir)/dev.tfplan'
+              artifact: 'azure-dev-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 3: Approval DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalDev
+    displayName: 'Approval - DEV'
+    dependsOn: PlanDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy DEV'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve DEV deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for DEV (Azure) before approving.
+
+                Environment  : DEV
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the azure-dev-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 4: Apply DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyDev
+    displayName: 'Apply - DEV'
+    dependsOn: ApprovalDev
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyDev
+        displayName: 'terraform apply (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'azure-dev-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'azure/dev.terraform.tfstate'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform apply (dev)'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: $(workingDir)
+                    commandOptions: 'dev.tfplan'
+                    environmentServiceNameAzureRM: $(serviceConnection)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 5: Plan UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanUat
+    displayName: 'Plan - UAT'
+    dependsOn: ApplyDev
+    condition: succeeded()
+    jobs:
+      - job: PlanUat
+        displayName: 'terraform plan (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'azure/uat.terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform plan (uat)'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: $(workingDir)
+              commandOptions: '-var-file="uat.tfvars" -out=uat.tfplan'
+              environmentServiceNameAzureRM: $(serviceConnection)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/uat.tfplan'
+              artifact: 'azure-uat-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 6: Approval UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalUat
+    displayName: 'Approval - UAT'
+    dependsOn: PlanUat
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy UAT'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve UAT deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for UAT (Azure) before approving.
+
+                Environment  : UAT
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the azure-uat-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 7: Apply UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyUat
+    displayName: 'Apply - UAT'
+    dependsOn: ApprovalUat
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyUat
+        displayName: 'terraform apply (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'uat'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'azure-uat-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'azure/uat.terraform.tfstate'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform apply (uat)'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: $(workingDir)
+                    commandOptions: 'uat.tfplan'
+                    environmentServiceNameAzureRM: $(serviceConnection)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 8: Plan PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanProd
+    displayName: 'Plan - PROD'
+    dependsOn: ApplyUat
+    condition: succeeded()
+    jobs:
+      - job: PlanProd
+        displayName: 'terraform plan (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'azure/prod.terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform plan (prod)'
+            inputs:
+              provider: 'azurerm'
+              command: 'plan'
+              workingDirectory: $(workingDir)
+              commandOptions: '-var-file="prod.tfvars" -out=prod.tfplan'
+              environmentServiceNameAzureRM: $(serviceConnection)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/prod.tfplan'
+              artifact: 'azure-prod-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 9: Approval PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalProd
+    displayName: 'Approval - PROD'
+    dependsOn: PlanProd
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy PROD'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve PROD deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for PROD (Azure) before approving.
+
+                Environment  : PROD
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                WARNING: This is a PRODUCTION deployment. Review carefully before approving.
+
+                Review the azure-prod-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 10: Apply PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyProd
+    displayName: 'Apply - PROD'
+    dependsOn: ApprovalProd
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyProd
+        displayName: 'terraform apply (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'prod'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'azure-prod-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'azure/prod.terraform.tfstate'
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform apply (prod)'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'apply'
+                    workingDirectory: $(workingDir)
+                    commandOptions: 'prod.tfplan'
+                    environmentServiceNameAzureRM: $(serviceConnection)

@@ -1,0 +1,561 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'gcp/**'
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'gcp/**'
+
+variables:
+  terraformVersion: '1.7.0'
+  serviceConnection: 'azure-service-connection'        # Azure service connection for state backend
+  backendResourceGroup: 'rg-tfstate-jproject'
+  backendStorageAccount: 'stjprojecttfstate'
+  backendContainer: 'tfstate'
+  workingDir: '$(System.DefaultWorkingDirectory)/gcp'
+  approverEmail: 'jpableras.azure@gmail.com'           # Juan Pablo Chavez
+  gcpProjectId: 'project-db8078ea-74f1-4ed8-9f2'
+  gcpProjectNumber: '829724132898'
+  adoOrgId: '565fad02-6dbb-4a59-9f09-c3d6edfc666e'
+
+stages:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 1: Validate & Lint
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: Validate
+    displayName: 'Validate & Lint'
+    jobs:
+      - job: Validate
+        displayName: 'fmt · validate · checkov'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - script: terraform fmt -check -recursive
+            displayName: 'terraform fmt check'
+            workingDirectory: $(workingDir)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init (dev backend — validate only)'
+            inputs:
+              provider: 'azurerm'                      # State backend is Azure Blob Storage
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'gcp/dev.terraform.tfstate'
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform validate'
+            inputs:
+              provider: 'azurerm'
+              command: 'validate'
+              workingDirectory: $(workingDir)
+              environmentServiceNameAzureRM: $(serviceConnection)
+
+          - script: |
+              pip install checkov --quiet
+              checkov -d . --framework terraform --quiet --compact
+            displayName: 'checkov security scan'
+            workingDirectory: $(workingDir)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 2: Plan DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanDev
+    displayName: 'Plan - DEV'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: PlanDev
+        displayName: 'terraform plan (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'gcp/dev.terraform.tfstate'
+
+          - bash: |
+              set -euo pipefail
+              ENV=dev
+              # Fetch OIDC token from ADO token service
+              OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+              echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+
+              # Build the external-account credential config
+              WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+              WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+              PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+
+              cat > /tmp/gcp_wif_creds.json << EOF
+              {
+                "type": "external_account",
+                "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+              }
+              EOF
+
+              echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+            displayName: 'Configure GCP WIF credentials (dev)'
+
+          - script: terraform plan -var-file="dev.tfvars" -out=dev.tfplan
+            displayName: 'terraform plan (dev)'
+            workingDirectory: $(workingDir)
+            env:
+              GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish dev plan'
+            inputs:
+              targetPath: '$(workingDir)/dev.tfplan'
+              artifact: 'gcp-dev-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 3: Approval DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalDev
+    displayName: 'Approval - DEV'
+    dependsOn: PlanDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy DEV'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve DEV deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for DEV (GCP) before approving.
+
+                Environment  : DEV
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the gcp-dev-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 4: Apply DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyDev
+    displayName: 'Apply - DEV'
+    dependsOn: ApprovalDev
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyDev
+        displayName: 'terraform apply (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'gcp-dev-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'gcp/dev.terraform.tfstate'
+
+                - bash: |
+                    set -euo pipefail
+                    ENV=dev
+                    OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+                    echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+                    WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+                    WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+                    PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+                    cat > /tmp/gcp_wif_creds.json << EOF
+                    {
+                      "type": "external_account",
+                      "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                      "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                      "token_url": "https://sts.googleapis.com/v1/token",
+                      "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+                    }
+                    EOF
+                    echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+                  displayName: 'Configure GCP WIF credentials (dev)'
+
+                - script: terraform apply dev.tfplan
+                  displayName: 'terraform apply (dev)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 5: Plan UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanUat
+    displayName: 'Plan - UAT'
+    dependsOn: ApplyDev
+    condition: succeeded()
+    jobs:
+      - job: PlanUat
+        displayName: 'terraform plan (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'gcp/uat.terraform.tfstate'
+
+          - bash: |
+              set -euo pipefail
+              ENV=uat
+              OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+              echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+              WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+              WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+              PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+              cat > /tmp/gcp_wif_creds.json << EOF
+              {
+                "type": "external_account",
+                "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+              }
+              EOF
+              echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+            displayName: 'Configure GCP WIF credentials (uat)'
+
+          - script: terraform plan -var-file="uat.tfvars" -out=uat.tfplan
+            displayName: 'terraform plan (uat)'
+            workingDirectory: $(workingDir)
+            env:
+              GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/uat.tfplan'
+              artifact: 'gcp-uat-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 6: Approval UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalUat
+    displayName: 'Approval - UAT'
+    dependsOn: PlanUat
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy UAT'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve UAT deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for UAT (GCP) before approving.
+
+                Environment  : UAT
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the gcp-uat-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 7: Apply UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyUat
+    displayName: 'Apply - UAT'
+    dependsOn: ApprovalUat
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyUat
+        displayName: 'terraform apply (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'uat'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'gcp-uat-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'gcp/uat.terraform.tfstate'
+
+                - bash: |
+                    set -euo pipefail
+                    ENV=uat
+                    OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+                    echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+                    WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+                    WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+                    PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+                    cat > /tmp/gcp_wif_creds.json << EOF
+                    {
+                      "type": "external_account",
+                      "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                      "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                      "token_url": "https://sts.googleapis.com/v1/token",
+                      "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+                    }
+                    EOF
+                    echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+                  displayName: 'Configure GCP WIF credentials (uat)'
+
+                - script: terraform apply uat.tfplan
+                  displayName: 'terraform apply (uat)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 8: Plan PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanProd
+    displayName: 'Plan - PROD'
+    dependsOn: ApplyUat
+    condition: succeeded()
+    jobs:
+      - job: PlanProd
+        displayName: 'terraform plan (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - task: TerraformTaskV4@4
+            displayName: 'terraform init'
+            inputs:
+              provider: 'azurerm'
+              command: 'init'
+              workingDirectory: $(workingDir)
+              backendServiceArm: $(serviceConnection)
+              backendAzureRmResourceGroupName: $(backendResourceGroup)
+              backendAzureRmStorageAccountName: $(backendStorageAccount)
+              backendAzureRmContainerName: $(backendContainer)
+              backendAzureRmKey: 'gcp/prod.terraform.tfstate'
+
+          - bash: |
+              set -euo pipefail
+              ENV=prod
+              OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+              echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+              WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+              WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+              PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+              cat > /tmp/gcp_wif_creds.json << EOF
+              {
+                "type": "external_account",
+                "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                "token_url": "https://sts.googleapis.com/v1/token",
+                "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+              }
+              EOF
+              echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+            displayName: 'Configure GCP WIF credentials (prod)'
+
+          - script: terraform plan -var-file="prod.tfvars" -out=prod.tfplan
+            displayName: 'terraform plan (prod)'
+            workingDirectory: $(workingDir)
+            env:
+              GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/prod.tfplan'
+              artifact: 'gcp-prod-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 9: Approval PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalProd
+    displayName: 'Approval - PROD'
+    dependsOn: PlanProd
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy PROD'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve PROD deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for PROD (GCP) before approving.
+
+                Environment  : PROD
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                WARNING: This is a PRODUCTION deployment. Review carefully before approving.
+
+                Review the gcp-prod-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 10: Apply PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyProd
+    displayName: 'Apply - PROD'
+    dependsOn: ApprovalProd
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyProd
+        displayName: 'terraform apply (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'prod'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'gcp-prod-tfplan'
+                    path: $(workingDir)
+
+                - task: TerraformTaskV4@4
+                  displayName: 'terraform init'
+                  inputs:
+                    provider: 'azurerm'
+                    command: 'init'
+                    workingDirectory: $(workingDir)
+                    backendServiceArm: $(serviceConnection)
+                    backendAzureRmResourceGroupName: $(backendResourceGroup)
+                    backendAzureRmStorageAccountName: $(backendStorageAccount)
+                    backendAzureRmContainerName: $(backendContainer)
+                    backendAzureRmKey: 'gcp/prod.terraform.tfstate'
+
+                - bash: |
+                    set -euo pipefail
+                    ENV=prod
+                    OIDC_TOKEN=$(curl -sS -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(serviceConnection)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+                    echo "$OIDC_TOKEN" > /tmp/ado_oidc_token.txt
+                    WIF_POOL="projects/$(gcpProjectNumber)/locations/global/workloadIdentityPools/jp-wif-pool-${ENV}"
+                    WIF_PROVIDER="${WIF_POOL}/providers/jp-wif-provider-${ENV}"
+                    PIPELINE_SA="jp-sa-pipeline-${ENV}@$(gcpProjectId).iam.gserviceaccount.com"
+                    cat > /tmp/gcp_wif_creds.json << EOF
+                    {
+                      "type": "external_account",
+                      "audience": "//iam.googleapis.com/${WIF_PROVIDER}",
+                      "subject_token_type": "urn:ietf:params:oauth:token-type:jwt",
+                      "token_url": "https://sts.googleapis.com/v1/token",
+                      "credential_source": { "file": "/tmp/ado_oidc_token.txt" },
+                      "service_account_impersonation_url": "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/${PIPELINE_SA}:generateAccessToken"
+                    }
+                    EOF
+                    echo "##vso[task.setvariable variable=GOOGLE_APPLICATION_CREDENTIALS;]/tmp/gcp_wif_creds.json"
+                  displayName: 'Configure GCP WIF credentials (prod)'
+
+                - script: terraform apply prod.tfplan
+                  displayName: 'terraform apply (prod)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    GOOGLE_APPLICATION_CREDENTIALS: $(GOOGLE_APPLICATION_CREDENTIALS)
