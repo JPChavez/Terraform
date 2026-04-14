@@ -6,16 +6,19 @@ resource "azurerm_kubernetes_cluster" "main" {
   kubernetes_version  = var.aks_kubernetes_version
   node_resource_group = local.aks_node_rg_name
 
+  #checkov:skip=CKV_AZURE_115:Private cluster conflicts with api_server_access_profile; API server is protected by authorized IP ranges in non-private environments (see aks-gotchas.md)
+  #checkov:skip=CKV_AZURE_226:Ephemeral OS disk cannot fit on Standard_D2s_v3 (cache ~50GB < 128GB required); Managed disk used per known AKS gotcha
+
   # Security best practices
   local_account_disabled            = true
   oidc_issuer_enabled               = true
   workload_identity_enabled         = true
   role_based_access_control_enabled = true
-  azure_policy_enabled              = true                        # CKV_AZURE_116
-  private_cluster_enabled           = var.aks_private_cluster_enabled # CKV_AZURE_115
+  azure_policy_enabled              = true                                # CKV_AZURE_116
+  private_cluster_enabled           = var.aks_private_cluster_enabled     # CKV_AZURE_115
   disk_encryption_set_id            = azurerm_disk_encryption_set.main.id # CKV_AZURE_117
-  sku_tier                          = "Standard"                  # CKV_AZURE_170
-                    # CKV_AZURE_171
+  sku_tier                          = "Standard"                          # CKV_AZURE_170
+  automatic_channel_upgrade         = "stable"                            # CKV_AZURE_171
 
   identity {
     type = "SystemAssigned"
@@ -43,8 +46,8 @@ resource "azurerm_kubernetes_cluster" "main" {
     vnet_subnet_id               = azurerm_subnet.aks.id
     only_critical_addons_enabled = true
     os_disk_type                 = "Managed" # Standard_D2s_v3 cache (~50GB) cannot fit 128GB ephemeral OS disk
-    max_pods                     = 110  # CKV_AZURE_168
-    enable_host_encryption      = true # CKV_AZURE_227
+    max_pods                     = 110       # CKV_AZURE_168
+    enable_host_encryption       = true      # CKV_AZURE_227
 
     upgrade_settings {
       max_surge = "10%"
@@ -52,7 +55,6 @@ resource "azurerm_kubernetes_cluster" "main" {
   }
 
   azure_active_directory_role_based_access_control {
-    managed            = true
     azure_rbac_enabled = true
     tenant_id          = var.tenant_id
   }
@@ -63,8 +65,8 @@ resource "azurerm_kubernetes_cluster" "main" {
     load_balancer_sku = "standard"
     outbound_type     = "loadBalancer"
     # Must not overlap with vnet (10.0.0.0/16) or any subnets
-    service_cidr      = "10.1.0.0/16"
-    dns_service_ip    = "10.1.0.10"
+    service_cidr   = "10.1.0.0/16"
+    dns_service_ip = "10.1.0.10"
   }
 
   oms_agent {
@@ -80,18 +82,18 @@ resource "azurerm_kubernetes_cluster" "main" {
 
 # User node pool — for application workloads with autoscaling
 resource "azurerm_kubernetes_cluster_node_pool" "user" {
-  name                  = "user"
-  kubernetes_cluster_id = azurerm_kubernetes_cluster.main.id
-  vm_size               = var.aks_user_vm_size
-  vnet_subnet_id        = azurerm_subnet.aks.id
-  os_disk_type          = "Managed" # D4s_v3 cache (~100GB) may not fit 128GB ephemeral; use Managed for reliability
-  mode                  = "User"
-  max_pods              = 110  # CKV_AZURE_168
+  name                   = "user"
+  kubernetes_cluster_id  = azurerm_kubernetes_cluster.main.id
+  vm_size                = var.aks_user_vm_size
+  vnet_subnet_id         = azurerm_subnet.aks.id
+  os_disk_type           = "Managed" # D4s_v3 cache (~100GB) may not fit 128GB ephemeral; use Managed for reliability
+  mode                   = "User"
+  max_pods               = 110  # CKV_AZURE_168
   enable_host_encryption = true # CKV_AZURE_227
 
   enable_auto_scaling = true
-  min_count            = var.aks_user_min_count
-  max_count            = var.aks_user_max_count
+  min_count           = var.aks_user_min_count
+  max_count           = var.aks_user_max_count
 
   upgrade_settings {
     max_surge = "33%"

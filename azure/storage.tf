@@ -8,13 +8,14 @@ resource "azurerm_storage_account" "main" {
   account_kind             = "StorageV2"
 
   # Security best practices
-  https_traffic_only_enabled       = true
-  min_tls_version                  = "TLS1_2"
-  allow_nested_items_to_be_public  = false
-  # shared_access_key_enabled = false is NOT set: azurerm 3.x uses the storage key to verify
+  https_traffic_only_enabled      = true
+  min_tls_version                 = "TLS1_2"
+  allow_nested_items_to_be_public = false
+  # shared_access_key_enabled must remain true: azurerm 3.x uses the storage key to verify
   # blob service availability after creation/CMK setup — disabling it causes a 403 at apply time.
-  # Security posture is maintained by: CMK encryption, private endpoint, public network access disabled.
-  #checkov:skip=CKV2_AZURE_40:azurerm 3.x provider requires key auth to verify blob service during create/CMK setup; upgrade to azurerm 4.x to enforce this
+  # Security posture is maintained by: CMK encryption, private endpoint, public network access disabled,
+  # and a 90-day SAS expiration policy (sas_policy below). Upgrade to azurerm 4.x to enforce false.
+  shared_access_key_enabled        = true  #checkov:skip=CKV2_AZURE_40:azurerm 3.x provider requires key auth to verify blob service during create/CMK setup; upgrade to azurerm 4.x to enforce this
   public_network_access_enabled    = false # CKV_AZURE_59: always disable public access
   cross_tenant_replication_enabled = false
 
@@ -34,6 +35,11 @@ resource "azurerm_storage_account" "main" {
   # CKV_AZURE_33: queue_properties cannot be managed when shared_access_key_enabled=false
   # (azurerm provider uses key-based auth to read/write queue properties)
   #checkov:skip=CKV_AZURE_33:Queue logging requires key-based auth which is disabled for security; blob/container soft-delete and versioning are enabled instead
+
+  # CKV2_AZURE_41: limit SAS token lifetime to 90 days
+  sas_policy {
+    expiration_period = "90.00:00:00"
+  }
 
   # CKV2_AZURE_1: customer-managed key for storage encryption
   # CKV2_AZURE_33: private endpoint connectivity is provided in private_endpoints.tf

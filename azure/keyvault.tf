@@ -8,9 +8,9 @@ resource "azurerm_key_vault" "main" {
   # Security best practices
   # enable_rbac_authorization is deprecated in the IDE but still functional in azurerm ~> 3.110
   # It is required here so that role assignments (azurerm_role_assignment) work correctly
-  enable_rbac_authorization       = true
-  soft_delete_retention_days      = 90
-  purge_protection_enabled        = true
+  enable_rbac_authorization  = true
+  soft_delete_retention_days = 90
+  purge_protection_enabled   = true
   # public_network_access_enabled = true is required for ip_rules to work.
   # Access is restricted via network_acls (default_action = Deny + explicit ip_rules).
   # Private endpoint provides VNet-level connectivity.
@@ -21,7 +21,7 @@ resource "azurerm_key_vault" "main" {
     default_action             = "Deny"
     bypass                     = "AzureServices"
     virtual_network_subnet_ids = [azurerm_subnet.system.id]
-    ip_rules                   = [var.terraform_operator_ip]  # Terraform operator IP for key management
+    ip_rules                   = [var.terraform_operator_ip] # Terraform operator IP for key management
   }
 
   # CKV2_AZURE_32: private endpoint connectivity is provided in private_endpoints.tf

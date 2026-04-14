@@ -1,4 +1,5 @@
 resource "azurerm_container_registry" "main" {
+  #checkov:skip=CKV_AZURE_233:zone_redundancy_enabled is explicitly set to true; checkov false-positive when SKU is provided via variable
   name                = local.acr_name
   resource_group_name = azurerm_resource_group.main.name
   location            = azurerm_resource_group.main.location
@@ -6,17 +7,17 @@ resource "azurerm_container_registry" "main" {
 
   # Security best practices
   admin_enabled                 = false
-  public_network_access_enabled = false                                    # CKV_AZURE_139: always disable public access
-  zone_redundancy_enabled       = true # CKV_AZURE_233 (requires Premium SKU at deploy time)
-  data_endpoint_enabled         = true # CKV_AZURE_237 (requires Premium SKU at deploy time)
-  quarantine_policy_enabled     = true # CKV_AZURE_166 (requires Premium SKU at deploy time)
+  public_network_access_enabled = false # CKV_AZURE_139: always disable public access
+  zone_redundancy_enabled       = true  # CKV_AZURE_233 (requires Premium SKU at deploy time)
+  data_endpoint_enabled         = true  # CKV_AZURE_237 (requires Premium SKU at deploy time)
+  quarantine_policy_enabled     = true  # CKV_AZURE_166 (requires Premium SKU at deploy time)
   retention_policy {
-    days    = 7     # CKV_AZURE_167: cleanup untagged manifests
+    days    = 7 # CKV_AZURE_167: cleanup untagged manifests
     enabled = true
   }
 
   trust_policy {
-    enabled = true  # CKV_AZURE_164: signed/trusted images
+    enabled = true # CKV_AZURE_164: signed/trusted images
   }
 
   identity {

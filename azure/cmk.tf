@@ -32,9 +32,9 @@ resource "azurerm_key_vault_key" "storage" {
 
 # Disk Encryption Set for AKS
 resource "azurerm_disk_encryption_set" "main" {
-  name                      = "des-${local.prefix}"
-  resource_group_name       = azurerm_resource_group.main.name
-  location                  = azurerm_resource_group.main.location
+  name                = "des-${local.prefix}"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
   # auto_key_rotation_enabled requires a versionless key ID
   key_vault_key_id          = azurerm_key_vault_key.disk_encryption.versionless_id
   auto_key_rotation_enabled = true
