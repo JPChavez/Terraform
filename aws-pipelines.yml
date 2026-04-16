@@ -1,0 +1,638 @@
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'aws/**'
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - 'aws/**'
+
+variables:
+  terraformVersion: '1.7.0'
+  workingDir: '$(System.DefaultWorkingDirectory)/aws'
+  approverEmail: 'jpableras.azure@gmail.com'           # Juan Pablo Chavez
+  awsRegion: 'us-east-1'
+  awsAccountId: '621807438085'
+  s3BackendBucket: 'jproject-tfstate'
+  s3BackendDynamoDBTable: 'jproject-tfstate-lock'
+  adoOrgId: '565fad02-6dbb-4a59-9f09-c3d6edfc666e'
+  # awsRoleArn must be set as a secret pipeline variable in Azure DevOps:
+  #   Settings → Pipelines → Library → Variable groups, or inline in the pipeline UI.
+  #   Value format: arn:aws:iam::621807438085:role/jp-role-pipeline-<env>
+  #
+  # One-time AWS setup (run locally before first pipeline execution):
+  #   1. Create IAM OIDC provider for Azure DevOps:
+  #        aws iam create-open-id-connect-provider \
+  #          --url "https://vstoken.dev.azure.com/$(adoOrgId)" \
+  #          --client-id-list "api://AzureADTokenExchange" \
+  #          --thumbprint-list "$(curl -s https://vstoken.dev.azure.com/$(adoOrgId)/.well-known/openid-configuration \
+  #            | python3 -c "import sys,json; print(json.load(sys.stdin)['jwks_uri'])" \
+  #            | xargs curl -s | python3 -c "import sys,json; [print(k['x5t']) for k in json.load(sys.stdin)['keys']]")"
+  #   2. Create pipeline IAM roles (dev/uat/prod) with trust policy referencing the OIDC provider.
+  #   3. Store each role ARN as awsRoleArnDev / awsRoleArnUat / awsRoleArnProd in ADO pipeline variables.
+
+stages:
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 1: Validate & Lint
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: Validate
+    displayName: 'Validate & Lint'
+    jobs:
+      - job: Validate
+        displayName: 'fmt · validate · tflint · checkov'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            displayName: 'Install Terraform $(terraformVersion)'
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - script: terraform fmt -check -recursive
+            displayName: 'terraform fmt check'
+            workingDirectory: $(workingDir)
+
+          - bash: |
+              set -euo pipefail
+
+              # Exchange ADO OIDC token for temporary AWS credentials using dev role
+              OIDC_TOKEN=$(curl -sS \
+                -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+              CREDS=$(aws sts assume-role-with-web-identity \
+                --role-arn "$(awsRoleArnDev)" \
+                --role-session-name "ado-validate-$(Build.BuildId)" \
+                --web-identity-token "$OIDC_TOKEN" \
+                --duration-seconds 3600 \
+                --region $(awsRegion) \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text)
+
+              echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+              echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+              echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+            displayName: 'Configure AWS OIDC credentials (dev role)'
+
+          - bash: |
+              set -euo pipefail
+              terraform init \
+                -backend-config="key=aws/dev.terraform.tfstate" \
+                -backend-config="bucket=$(s3BackendBucket)" \
+                -backend-config="region=$(awsRegion)" \
+                -backend-config="encrypt=true" \
+                -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+            displayName: 'terraform init'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - bash: terraform validate
+            displayName: 'terraform validate'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - script: |
+              curl -s https://raw.githubusercontent.com/terraform-linters/tflint/master/install_linux.sh | bash
+              tflint --init
+              tflint --recursive
+            displayName: 'tflint'
+            workingDirectory: $(workingDir)
+
+          - script: |
+              pip install checkov --quiet
+              checkov -d . --framework terraform --quiet --compact
+            displayName: 'checkov security scan'
+            workingDirectory: $(workingDir)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 2: Plan DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanDev
+    displayName: 'Plan - DEV'
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: PlanDev
+        displayName: 'terraform plan (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - bash: |
+              set -euo pipefail
+              OIDC_TOKEN=$(curl -sS \
+                -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+              CREDS=$(aws sts assume-role-with-web-identity \
+                --role-arn "$(awsRoleArnDev)" \
+                --role-session-name "ado-plan-dev-$(Build.BuildId)" \
+                --web-identity-token "$OIDC_TOKEN" \
+                --duration-seconds 3600 \
+                --region $(awsRegion) \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text)
+
+              echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+              echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+              echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+            displayName: 'Configure AWS OIDC credentials (dev)'
+
+          - bash: |
+              set -euo pipefail
+              terraform init \
+                -backend-config="key=aws/dev.terraform.tfstate" \
+                -backend-config="bucket=$(s3BackendBucket)" \
+                -backend-config="region=$(awsRegion)" \
+                -backend-config="encrypt=true" \
+                -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+            displayName: 'terraform init'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - bash: terraform plan -var-file="dev.tfvars" -out=dev.tfplan
+            displayName: 'terraform plan (dev)'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish dev plan'
+            inputs:
+              targetPath: '$(workingDir)/dev.tfplan'
+              artifact: 'aws-dev-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 3: Approval DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalDev
+    displayName: 'Approval - DEV'
+    dependsOn: PlanDev
+    condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy DEV'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve DEV deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for DEV (AWS) before approving.
+
+                Environment  : DEV
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+                AWS Account  : $(awsAccountId)
+                AWS Region   : $(awsRegion)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the aws-dev-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 4: Apply DEV
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyDev
+    displayName: 'Apply - DEV'
+    dependsOn: ApprovalDev
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyDev
+        displayName: 'terraform apply (dev)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'dev'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'aws-dev-tfplan'
+                    path: $(workingDir)
+
+                - bash: |
+                    set -euo pipefail
+                    OIDC_TOKEN=$(curl -sS \
+                      -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+                    CREDS=$(aws sts assume-role-with-web-identity \
+                      --role-arn "$(awsRoleArnDev)" \
+                      --role-session-name "ado-apply-dev-$(Build.BuildId)" \
+                      --web-identity-token "$OIDC_TOKEN" \
+                      --duration-seconds 3600 \
+                      --region $(awsRegion) \
+                      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                      --output text)
+
+                    echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+                    echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+                    echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+                  displayName: 'Configure AWS OIDC credentials (dev)'
+
+                - bash: |
+                    set -euo pipefail
+                    terraform init \
+                      -backend-config="key=aws/dev.terraform.tfstate" \
+                      -backend-config="bucket=$(s3BackendBucket)" \
+                      -backend-config="region=$(awsRegion)" \
+                      -backend-config="encrypt=true" \
+                      -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+                  displayName: 'terraform init'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)
+
+                - bash: terraform apply dev.tfplan
+                  displayName: 'terraform apply (dev)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 5: Plan UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanUat
+    displayName: 'Plan - UAT'
+    dependsOn: ApplyDev
+    condition: succeeded()
+    jobs:
+      - job: PlanUat
+        displayName: 'terraform plan (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - bash: |
+              set -euo pipefail
+              OIDC_TOKEN=$(curl -sS \
+                -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+              CREDS=$(aws sts assume-role-with-web-identity \
+                --role-arn "$(awsRoleArnUat)" \
+                --role-session-name "ado-plan-uat-$(Build.BuildId)" \
+                --web-identity-token "$OIDC_TOKEN" \
+                --duration-seconds 3600 \
+                --region $(awsRegion) \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text)
+
+              echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+              echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+              echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+            displayName: 'Configure AWS OIDC credentials (uat)'
+
+          - bash: |
+              set -euo pipefail
+              terraform init \
+                -backend-config="key=aws/uat.terraform.tfstate" \
+                -backend-config="bucket=$(s3BackendBucket)" \
+                -backend-config="region=$(awsRegion)" \
+                -backend-config="encrypt=true" \
+                -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+            displayName: 'terraform init'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - bash: terraform plan -var-file="uat.tfvars" -out=uat.tfplan
+            displayName: 'terraform plan (uat)'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/uat.tfplan'
+              artifact: 'aws-uat-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 6: Approval UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalUat
+    displayName: 'Approval - UAT'
+    dependsOn: PlanUat
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy UAT'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve UAT deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for UAT (AWS) before approving.
+
+                Environment  : UAT
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+                AWS Account  : $(awsAccountId)
+                AWS Region   : $(awsRegion)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                Review the aws-uat-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 7: Apply UAT
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyUat
+    displayName: 'Apply - UAT'
+    dependsOn: ApprovalUat
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyUat
+        displayName: 'terraform apply (uat)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'uat'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'aws-uat-tfplan'
+                    path: $(workingDir)
+
+                - bash: |
+                    set -euo pipefail
+                    OIDC_TOKEN=$(curl -sS \
+                      -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+                    CREDS=$(aws sts assume-role-with-web-identity \
+                      --role-arn "$(awsRoleArnUat)" \
+                      --role-session-name "ado-apply-uat-$(Build.BuildId)" \
+                      --web-identity-token "$OIDC_TOKEN" \
+                      --duration-seconds 3600 \
+                      --region $(awsRegion) \
+                      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                      --output text)
+
+                    echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+                    echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+                    echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+                  displayName: 'Configure AWS OIDC credentials (uat)'
+
+                - bash: |
+                    set -euo pipefail
+                    terraform init \
+                      -backend-config="key=aws/uat.terraform.tfstate" \
+                      -backend-config="bucket=$(s3BackendBucket)" \
+                      -backend-config="region=$(awsRegion)" \
+                      -backend-config="encrypt=true" \
+                      -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+                  displayName: 'terraform init'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)
+
+                - bash: terraform apply uat.tfplan
+                  displayName: 'terraform apply (uat)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 8: Plan PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: PlanProd
+    displayName: 'Plan - PROD'
+    dependsOn: ApplyUat
+    condition: succeeded()
+    jobs:
+      - job: PlanProd
+        displayName: 'terraform plan (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        steps:
+          - task: TerraformInstaller@1
+            inputs:
+              terraformVersion: $(terraformVersion)
+
+          - bash: |
+              set -euo pipefail
+              OIDC_TOKEN=$(curl -sS \
+                -H "Authorization: bearer $(System.AccessToken)" \
+                "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+              CREDS=$(aws sts assume-role-with-web-identity \
+                --role-arn "$(awsRoleArnProd)" \
+                --role-session-name "ado-plan-prod-$(Build.BuildId)" \
+                --web-identity-token "$OIDC_TOKEN" \
+                --duration-seconds 3600 \
+                --region $(awsRegion) \
+                --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                --output text)
+
+              echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+              echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+              echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+            displayName: 'Configure AWS OIDC credentials (prod)'
+
+          - bash: |
+              set -euo pipefail
+              terraform init \
+                -backend-config="key=aws/prod.terraform.tfstate" \
+                -backend-config="bucket=$(s3BackendBucket)" \
+                -backend-config="region=$(awsRegion)" \
+                -backend-config="encrypt=true" \
+                -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+            displayName: 'terraform init'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - bash: terraform plan -var-file="prod.tfvars" -out=prod.tfplan
+            displayName: 'terraform plan (prod)'
+            workingDirectory: $(workingDir)
+            env:
+              AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+              AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+              AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+              AWS_DEFAULT_REGION: $(awsRegion)
+
+          - task: PublishPipelineArtifact@1
+            inputs:
+              targetPath: '$(workingDir)/prod.tfplan'
+              artifact: 'aws-prod-tfplan'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 9: Approval PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApprovalProd
+    displayName: 'Approval - PROD'
+    dependsOn: PlanProd
+    condition: succeeded()
+    jobs:
+      - job: WaitForApproval
+        displayName: 'Waiting for approval to deploy PROD'
+        pool: server
+        timeoutInMinutes: '1440'
+        steps:
+          - task: ManualValidation@0
+            displayName: 'Approve PROD deployment'
+            inputs:
+              notifyUsers: $(approverEmail)
+              instructions: |
+                Please review the Terraform plan for PROD (AWS) before approving.
+
+                Environment  : PROD
+                Branch       : $(Build.SourceBranch)
+                Requested by : $(Build.RequestedFor)
+                AWS Account  : $(awsAccountId)
+                AWS Region   : $(awsRegion)
+
+                Approval URL : $(System.CollectionUri)$(System.TeamProject)/_build/results?buildId=$(Build.BuildId)&view=results
+
+                WARNING: This is a PRODUCTION deployment. Review carefully before approving.
+
+                Review the aws-prod-tfplan artifact, then approve or reject.
+              onTimeout: 'reject'
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # STAGE 10: Apply PROD
+  # ─────────────────────────────────────────────────────────────────────────────
+  - stage: ApplyProd
+    displayName: 'Apply - PROD'
+    dependsOn: ApprovalProd
+    condition: succeeded()
+    jobs:
+      - deployment: ApplyProd
+        displayName: 'terraform apply (prod)'
+        pool:
+          vmImage: ubuntu-latest
+        environment: 'prod'
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - task: TerraformInstaller@1
+                  inputs:
+                    terraformVersion: $(terraformVersion)
+
+                - task: DownloadPipelineArtifact@2
+                  inputs:
+                    artifact: 'aws-prod-tfplan'
+                    path: $(workingDir)
+
+                - bash: |
+                    set -euo pipefail
+                    OIDC_TOKEN=$(curl -sS \
+                      -H "Authorization: bearer $(System.AccessToken)" \
+                      "$(System.OidcRequestUri)?api-version=7.1&serviceConnectionId=$(adoOrgId)" \
+                      | python3 -c "import sys,json; print(json.load(sys.stdin)['oidcToken'])")
+
+                    CREDS=$(aws sts assume-role-with-web-identity \
+                      --role-arn "$(awsRoleArnProd)" \
+                      --role-session-name "ado-apply-prod-$(Build.BuildId)" \
+                      --web-identity-token "$OIDC_TOKEN" \
+                      --duration-seconds 3600 \
+                      --region $(awsRegion) \
+                      --query 'Credentials.[AccessKeyId,SecretAccessKey,SessionToken]' \
+                      --output text)
+
+                    echo "##vso[task.setvariable variable=AWS_ACCESS_KEY_ID;issecret=true]$(echo $CREDS | cut -d' ' -f1)"
+                    echo "##vso[task.setvariable variable=AWS_SECRET_ACCESS_KEY;issecret=true]$(echo $CREDS | cut -d' ' -f2)"
+                    echo "##vso[task.setvariable variable=AWS_SESSION_TOKEN;issecret=true]$(echo $CREDS | cut -d' ' -f3)"
+                  displayName: 'Configure AWS OIDC credentials (prod)'
+
+                - bash: |
+                    set -euo pipefail
+                    terraform init \
+                      -backend-config="key=aws/prod.terraform.tfstate" \
+                      -backend-config="bucket=$(s3BackendBucket)" \
+                      -backend-config="region=$(awsRegion)" \
+                      -backend-config="encrypt=true" \
+                      -backend-config="dynamodb_table=$(s3BackendDynamoDBTable)"
+                  displayName: 'terraform init'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)
+
+                - bash: terraform apply prod.tfplan
+                  displayName: 'terraform apply (prod)'
+                  workingDirectory: $(workingDir)
+                  env:
+                    AWS_ACCESS_KEY_ID: $(AWS_ACCESS_KEY_ID)
+                    AWS_SECRET_ACCESS_KEY: $(AWS_SECRET_ACCESS_KEY)
+                    AWS_SESSION_TOKEN: $(AWS_SESSION_TOKEN)
+                    AWS_DEFAULT_REGION: $(awsRegion)

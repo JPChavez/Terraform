@@ -20,14 +20,18 @@ terraform {
     }
   }
 
-  # State stored in the same Azure Blob Storage backend, under a gcp/ prefix.
-  # Key is passed at init time via -backend-config to support multiple environments:
-  #   terraform init -reconfigure -backend-config="key=gcp/dev.terraform.tfstate"
-  #   terraform init -reconfigure -backend-config="key=gcp/uat.terraform.tfstate"
-  #   terraform init -reconfigure -backend-config="key=gcp/prod.terraform.tfstate"
-  backend "azurerm" {
-    resource_group_name  = "rg-tfstate-jproject"
-    storage_account_name = "stjprojecttfstate"
-    container_name       = "tfstate"
+  # State stored in a GCS bucket native to GCP.
+  # Bucket must be created before first init (see setup commands below).
+  # Prefix is passed at init time via -backend-config to support multiple environments:
+  #   terraform init -reconfigure -backend-config="prefix=gcp/dev"
+  #   terraform init -reconfigure -backend-config="prefix=gcp/uat"
+  #   terraform init -reconfigure -backend-config="prefix=gcp/prod"
+  #
+  # Setup (one-time):
+  #   gcloud storage buckets create gs://jproject-tfstate --location=us-central1 \
+  #     --uniform-bucket-level-access --public-access-prevention
+  #   gcloud storage buckets update gs://jproject-tfstate --versioning
+  backend "gcs" {
+    bucket = "jproject-tfstate"
   }
 }
