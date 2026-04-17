@@ -26,7 +26,7 @@ resource "null_resource" "ar_service_agent_bootstrap" {
   }
 
   provisioner "local-exec" {
-    command = "gcloud beta services identity create --service=artifactregistry.googleapis.com --project=${var.gcp_project_id}"
+    command = "gcloud --quiet beta services identity create --service=artifactregistry.googleapis.com --project=${var.gcp_project_id}"
   }
 }
 
