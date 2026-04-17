@@ -94,3 +94,20 @@ output "kms_secrets_key_arn" {
   description = "ARN of the KMS key used for Secrets Manager encryption"
   value       = aws_kms_key.secrets.arn
 }
+
+# ── EC2 ───────────────────────────────────────────────────────────────────────
+
+output "ec2_instance_id" {
+  description = "ID of the EC2 instance"
+  value       = aws_instance.main.id
+}
+
+output "ec2_private_ip" {
+  description = "Private IP address of the EC2 instance"
+  value       = aws_instance.main.private_ip
+}
+
+output "ec2_ssm_connect_command" {
+  description = "AWS CLI command to connect to the instance via SSM Session Manager"
+  value       = "aws ssm start-session --target ${aws_instance.main.id} --region ${var.region}"
+}

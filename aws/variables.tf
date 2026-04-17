@@ -148,6 +148,20 @@ variable "s3_lifecycle_expiration_days" {
 
 # ── KMS ───────────────────────────────────────────────────────────────────────
 
+# ── EC2 ───────────────────────────────────────────────────────────────────────
+
+variable "ec2_instance_type" {
+  description = "EC2 instance type for the VM"
+  type        = string
+  default     = "t3.medium"
+}
+
+variable "ec2_root_volume_size" {
+  description = "Root EBS volume size in GiB"
+  type        = number
+  default     = 20
+}
+
 variable "kms_deletion_window_days" {
   description = "Waiting period (in days) before KMS key deletion"
   type        = number

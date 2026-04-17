@@ -26,6 +26,10 @@ locals {
   kms_alias_eks     = "alias/${var.project_acronym}-key-eks-${var.environment}"
   kms_alias_s3      = "alias/${var.project_acronym}-key-s3-${var.environment}"
   kms_alias_secrets = "alias/${var.project_acronym}-key-sm-${var.environment}"
+  kms_alias_ec2     = "alias/${var.project_acronym}-key-ec2-${var.environment}"
+
+  # EC2
+  ec2_name = "${var.project_acronym}-ec2-${var.environment}"
 
   # common_tags are applied to all resources via provider default_tags and explicit tags blocks.
   # Note: AWS tag values are strings; owner spaces are preserved (unlike GCP labels).
