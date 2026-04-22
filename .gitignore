@@ -16,10 +16,12 @@ override.tf.json
 # Transient lock info files created by terraform apply
 .terraform.tfstate.lock.info
 
-# Variable files — azure/dev.tfvars is intentionally tracked (no secrets, config only)
+# Variable files — dev.tfvars per cloud tracked (no secrets, config only)
 *.tfvars
 *.tfvars.json
 !azure/dev.tfvars
+!gcp/dev.tfvars
+!aws/dev.tfvars
 
 # CLI configuration files
 .terraformrc
