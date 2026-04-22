@@ -45,9 +45,19 @@ jobs:
         run: terraform validate
         working-directory: ${{ env.WORKING_DIR }}
 
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.53.0
+
+      - name: tflint
+        run: |
+          tflint --init
+          tflint --recursive
+        working-directory: ${{ env.WORKING_DIR }}
+
       - name: checkov security scan
         run: |
-          pip install checkov --quiet
+          pip install checkov==3.2.0 --quiet
           checkov -d . --framework terraform --quiet --compact
         working-directory: ${{ env.WORKING_DIR }}
 
