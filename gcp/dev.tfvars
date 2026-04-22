@@ -21,7 +21,7 @@ gke_user_max_count          = 3
 gke_user_machine_type       = "e2-standard-4"
 gke_node_locations          = ["us-central1-b", "us-central1-f"]
 gke_private_cluster_enabled = false
-gke_master_authorized_cidr  = "0.0.0.0/0"
+gke_master_authorized_cidr  = "189.217.80.179/32"
 
 # Storage — STANDARD + regional (equivalent of Azure ZRS)
 gcs_storage_class = "STANDARD"

@@ -20,7 +20,7 @@ eks_user_min_count         = 1
 eks_user_max_count         = 3
 eks_user_desired_count     = 1
 eks_endpoint_public_access = true
-eks_public_access_cidrs    = ["0.0.0.0/0"]
+eks_public_access_cidrs    = ["189.217.80.179/32"]
 
 # ECR
 ecr_image_retention_count = 30
