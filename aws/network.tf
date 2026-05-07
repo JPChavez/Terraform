@@ -14,6 +14,7 @@ resource "aws_cloudwatch_log_group" "vpc_flow_logs" {
   name              = "/aws/vpc/flow-logs/${local.prefix}"
   retention_in_days = 30
   kms_key_id        = aws_kms_key.eks.arn
+  tags              = local.common_tags
 }
 
 resource "aws_flow_log" "main" {

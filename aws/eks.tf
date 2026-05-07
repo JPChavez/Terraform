@@ -5,6 +5,7 @@ resource "aws_cloudwatch_log_group" "eks" {
   name              = "/aws/eks/${local.eks_cluster_name}/cluster"
   retention_in_days = 30
   kms_key_id        = aws_kms_key.eks.arn
+  tags              = local.common_tags
 }
 
 # ── EKS Cluster ───────────────────────────────────────────────────────────────
@@ -86,7 +87,7 @@ resource "aws_eks_node_group" "system" {
     aws_iam_role_policy_attachment.eks_ebs_csi_policy,
   ]
 
-  tags = { Name = "${local.prefix}-system" }
+  tags = merge(local.common_tags, { Name = "${local.prefix}-system" })
 }
 
 # ── User Node Group — equivalent of AKS user node pool with autoscaling ───────
@@ -121,7 +122,7 @@ resource "aws_eks_node_group" "user" {
     aws_iam_role_policy_attachment.eks_ebs_csi_policy,
   ]
 
-  tags = { Name = "${local.prefix}-user" }
+  tags = merge(local.common_tags, { Name = "${local.prefix}-user" })
 }
 
 # ── Launch Templates — enforce EBS encryption on nodes ────────────────────────
