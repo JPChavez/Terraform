@@ -41,12 +41,6 @@ variable "owner" {
   default     = "Juan Pablo Chavez"
 }
 
-variable "terraform_operator_ip" {
-  description = "Public IP of the machine running Terraform — used in authorized network rules"
-  type        = string
-  default     = "189.217.80.179"
-}
-
 # ── Network ──────────────────────────────────────────────────────────────────
 
 variable "vpc_cidr" {

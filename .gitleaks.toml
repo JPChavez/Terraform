@@ -1,0 +1,35 @@
+title = "JProject — Gitleaks Configuration"
+
+# Extend the default gitleaks ruleset and layer allowlists on top.
+# All rules that ship with gitleaks remain active unless explicitly suppressed below.
+[extend]
+useDefault = true
+
+# ── Allowlists ────────────────────────────────────────────────────────────────
+
+# tfvars files hold Terraform variable values: subscription/tenant UUIDs, project
+# IDs, region names, CIDR blocks, VM sizes, and node counts.
+# Actual credentials must live in Key Vault (Azure), Secret Manager (GCP), or
+# Secrets Manager (AWS) — never in tfvars. Safe to allow entirely.
+[[allowlists]]
+description = "Terraform variable files — infrastructure config IDs, not credentials"
+paths = [
+  '''\.tfvars$''',
+]
+
+# GitHub Actions workflow files reference secrets via ${{ secrets.NAME }} syntax.
+# These are runtime variable references resolved by the Actions runner — the
+# actual secret values are never written into the file.
+[[allowlists]]
+description = "GitHub Actions workflows — secrets.X are runtime references, not values"
+paths = [
+  '''\.github/workflows/''',
+]
+
+# ── Inline suppressions ───────────────────────────────────────────────────────
+# For any remaining false positive in a .tf file, suppress it inline:
+#
+#   some_attribute = "non-secret-value"  # gitleaks:allow
+#
+# This is intentionally narrow — .tf source files are kept fully scanned so that
+# accidentally hardcoded credentials in resource attributes are always caught.

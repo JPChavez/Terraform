@@ -1,12 +1,13 @@
 # Cloud Storage bucket — equivalent of Azure Storage Account
 resource "google_storage_bucket" "main" {
+  #checkov:skip=CKV_GCP_62:Access logging requires a dedicated sink bucket; deferred for dev environment
   name          = local.gcs_bucket_name
   location      = var.gcs_location
   storage_class = var.gcs_storage_class
   force_destroy = false
 
   # Security best practices — equivalent of Azure Storage security settings
-  uniform_bucket_level_access = true   # Enforces IAM over legacy ACLs (CKV_GCP_29)
+  uniform_bucket_level_access = true       # Enforces IAM over legacy ACLs (CKV_GCP_29)
   public_access_prevention    = "enforced" # Equivalent of allow_nested_items_to_be_public = false
 
   # Versioning — equivalent of blob versioning_enabled = true

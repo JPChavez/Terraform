@@ -41,10 +41,10 @@ resource "aws_ecr_lifecycle_policy" "main" {
         rulePriority = 2
         description  = "Keep only the last ${var.ecr_image_retention_count} tagged images"
         selection = {
-          tagStatus   = "tagged"
+          tagStatus     = "tagged"
           tagPrefixList = ["v"]
-          countType   = "imageCountMoreThan"
-          countNumber = var.ecr_image_retention_count
+          countType     = "imageCountMoreThan"
+          countNumber   = var.ecr_image_retention_count
         }
         action = { type = "expire" }
       }
@@ -73,8 +73,8 @@ resource "aws_ecr_repository_policy" "main" {
         ]
       },
       {
-        Sid    = "DenyPublicAccess"
-        Effect = "Deny"
+        Sid       = "DenyPublicAccess"
+        Effect    = "Deny"
         Principal = "*"
         Action    = "ecr:*"
         Condition = {

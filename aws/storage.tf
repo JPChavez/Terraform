@@ -28,10 +28,10 @@ resource "aws_s3_bucket_server_side_encryption_configuration" "logs" {
 
 resource "aws_s3_bucket_public_access_block" "logs" {
   bucket                  = aws_s3_bucket.logs.id
-  block_public_acls       = true  # CKV_AWS_53
-  block_public_policy     = true  # CKV_AWS_54
-  ignore_public_acls      = true  # CKV_AWS_55
-  restrict_public_buckets = true  # CKV_AWS_56
+  block_public_acls       = true # CKV_AWS_53
+  block_public_policy     = true # CKV_AWS_54
+  ignore_public_acls      = true # CKV_AWS_55
+  restrict_public_buckets = true # CKV_AWS_56
 }
 
 resource "aws_s3_bucket_ownership_controls" "logs" {

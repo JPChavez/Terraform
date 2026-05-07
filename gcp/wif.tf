@@ -27,6 +27,7 @@ resource "google_project_iam_member" "pipeline_storage_admin" {
 }
 
 resource "google_project_iam_member" "pipeline_iam_sa_admin" {
+  #checkov:skip=CKV_GCP_49:Pipeline SA requires serviceAccountAdmin to create and manage GKE node SA and WIF bindings during terraform apply
   project = var.gcp_project_id
   role    = "roles/iam.serviceAccountAdmin"
   member  = "serviceAccount:${google_service_account.pipeline.email}"
@@ -72,8 +73,8 @@ resource "google_iam_workload_identity_pool_provider" "ado" {
   project                            = var.gcp_project_id
 
   attribute_mapping = {
-    "google.subject"       = "assertion.sub"
-    "attribute.aud"        = "assertion.aud"
+    "google.subject" = "assertion.sub"
+    "attribute.aud"  = "assertion.aud"
   }
 
   # Only allow tokens issued for this specific ADO org

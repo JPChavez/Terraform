@@ -26,8 +26,8 @@ eks_public_access_cidrs    = ["189.217.80.179/32"]
 ecr_image_retention_count = 30
 
 # S3
-s3_lifecycle_transition_days  = 90
-s3_lifecycle_expiration_days  = 365
+s3_lifecycle_transition_days = 90
+s3_lifecycle_expiration_days = 365
 
 # KMS
 kms_deletion_window_days = 30

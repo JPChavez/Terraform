@@ -28,7 +28,7 @@ resource "aws_eks_cluster" "main" {
   vpc_config {
     subnet_ids              = concat(aws_subnet.eks[*].id, aws_subnet.system[*].id)
     security_group_ids      = [aws_security_group.eks_cluster.id]
-    endpoint_private_access = true  # CKV_AWS_39
+    endpoint_private_access = true # CKV_AWS_39
     endpoint_public_access  = var.eks_endpoint_public_access
     public_access_cidrs     = var.eks_endpoint_public_access ? var.eks_public_access_cidrs : null
   }
@@ -134,7 +134,7 @@ resource "aws_launch_template" "system_nodes" {
     ebs {
       volume_size           = 50
       volume_type           = "gp3"
-      encrypted             = true  # CKV_AWS_341
+      encrypted             = true # CKV_AWS_341
       kms_key_id            = aws_kms_key.eks.arn
       delete_on_termination = true
     }
@@ -165,7 +165,7 @@ resource "aws_launch_template" "user_nodes" {
     ebs {
       volume_size           = 100
       volume_type           = "gp3"
-      encrypted             = true  # CKV_AWS_341
+      encrypted             = true # CKV_AWS_341
       kms_key_id            = aws_kms_key.eks.arn
       delete_on_termination = true
     }

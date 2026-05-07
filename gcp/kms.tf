@@ -19,6 +19,10 @@ resource "google_kms_crypto_key" "gke" {
   }
 
   labels = local.common_labels
+
+  lifecycle {
+    prevent_destroy = true # KMS keys protect encrypted data — accidental deletion is unrecoverable (CKV_GCP_82)
+  }
 }
 
 # Key for GCS bucket CMEK
@@ -35,6 +39,10 @@ resource "google_kms_crypto_key" "storage" {
   }
 
   labels = local.common_labels
+
+  lifecycle {
+    prevent_destroy = true # CKV_GCP_82
+  }
 }
 
 # Key for Artifact Registry CMEK
@@ -51,4 +59,8 @@ resource "google_kms_crypto_key" "artifact_registry" {
   }
 
   labels = local.common_labels
+
+  lifecycle {
+    prevent_destroy = true # CKV_GCP_82
+  }
 }

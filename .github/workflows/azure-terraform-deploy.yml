@@ -7,10 +7,16 @@ on:
     paths:
       - 'azure/**'
   workflow_dispatch:
+    inputs:
+      force_destroy:
+        description: 'Allow destructive changes — type "yes" to confirm'
+        required: false
+        default: 'no'
 
 permissions:
   id-token: write
   contents: read
+  security-events: write
 
 env:
   TF_VERSION: '1.7.0'
@@ -21,9 +27,30 @@ env:
   ARM_USE_OIDC: 'true'
 
 jobs:
+  # ── Gateway 1: Secret Scanning ──────────────────────────────────────────────
+  secrets-scan:
+    name: Secret Scanning
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install gitleaks
+        run: |
+          curl -sSfL \
+            https://github.com/gitleaks/gitleaks/releases/download/v8.18.4/gitleaks_8.18.4_linux_x64.tar.gz \
+            | tar -xz -C /usr/local/bin gitleaks
+
+      - name: Scan for secrets
+        run: gitleaks detect --source . --redact --no-git --config .gitleaks.toml
+
+  # ── Gateway 2: Validate, Lint & Security Scan (with SARIF upload) ───────────
   validate:
     name: Validate & Lint
     runs-on: ubuntu-latest
+    needs: secrets-scan
 
     steps:
       - uses: actions/checkout@v4
@@ -63,9 +90,18 @@ jobs:
       - name: checkov security scan
         run: |
           pip install checkov==3.2.0 --quiet
+          checkov -d . --framework terraform --output sarif 2>/dev/null > results.sarif; true
           checkov -d . --framework terraform --quiet --compact
         working-directory: ${{ env.WORKING_DIR }}
 
+      - name: Upload checkov SARIF to GitHub Security
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: ${{ env.WORKING_DIR }}/results.sarif
+          category: checkov-azure
+
+  # ── Plan ─────────────────────────────────────────────────────────────────────
   plan-dev:
     name: Plan — DEV
     runs-on: ubuntu-latest
@@ -92,18 +128,57 @@ jobs:
         run: terraform plan -var-file="dev.tfvars" -out=dev.tfplan
         working-directory: ${{ env.WORKING_DIR }}
 
+      - name: Detect destructive changes
+        run: |
+          terraform show -no-color dev.tfplan > plan_readable.txt 2>/dev/null || true
+          DESTROYS=$(grep -c "# .* will be destroyed" plan_readable.txt 2>/dev/null || echo "0")
+          echo "$DESTROYS" > destroy_count.txt
+          if [ "$DESTROYS" -gt "0" ]; then
+            echo "::warning::⚠️ $DESTROYS resource(s) will be DESTROYED by this plan"
+            grep "# .* will be destroyed" plan_readable.txt || true
+          fi
+        working-directory: ${{ env.WORKING_DIR }}
+
       - name: Upload plan
         uses: actions/upload-artifact@v4
         with:
           name: azure-dev-tfplan
-          path: ${{ env.WORKING_DIR }}/dev.tfplan
+          path: |
+            ${{ env.WORKING_DIR }}/dev.tfplan
+            ${{ env.WORKING_DIR }}/destroy_count.txt
           retention-days: 1
 
+  # ── Gateway 3: Destroy Protection ────────────────────────────────────────────
+  destroy-gate:
+    name: Destroy Protection Gate
+    runs-on: ubuntu-latest
+    needs: plan-dev
+
+    steps:
+      - name: Download plan artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: azure-dev-tfplan
+          path: plan
+
+      - name: Enforce destroy protection
+        run: |
+          DESTROYS=$(cat plan/destroy_count.txt 2>/dev/null || echo "0")
+          FORCE="${{ inputs.force_destroy }}"
+          echo "Detected destroys: $DESTROYS | force_destroy: $FORCE"
+          if [ "$DESTROYS" -gt "0" ] && [ "$FORCE" != "yes" ]; then
+            echo "::error::🚨 DESTROY PROTECTION: $DESTROYS resource(s) would be destroyed."
+            echo "::error::Re-run via workflow_dispatch with force_destroy = yes to override."
+            exit 1
+          fi
+          echo "✅ Destroy gate passed (destroys=$DESTROYS, force=$FORCE)"
+
+  # ── Apply ─────────────────────────────────────────────────────────────────────
   apply-dev:
     name: Apply — DEV
     runs-on: ubuntu-latest
-    needs: plan-dev
-    environment: dev  # Add required reviewers in GitHub → Settings → Environments → dev
+    needs: destroy-gate
+    environment: dev  # required reviewer: Juan Pablo Chavez
 
     steps:
       - uses: actions/checkout@v4

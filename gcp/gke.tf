@@ -7,6 +7,10 @@ resource "google_service_account" "gke_nodes" {
 
 # GKE cluster — regional for HA (equivalent of AKS Standard tier with zone redundancy)
 resource "google_container_cluster" "main" {
+  #checkov:skip=CKV_GCP_18:Public endpoint intentional for dev; access restricted to operator IP via master_authorized_networks_config
+  #checkov:skip=CKV_GCP_12:ADVANCED_DATAPATH (Dataplane V2) enforces NetworkPolicy natively via eBPF; explicit network_policy block incompatible with this provider
+  #checkov:skip=CKV_GCP_65:Google Groups RBAC requires Google Workspace / Cloud Identity, not provisioned for this project
+  #checkov:skip=CKV_GCP_69:workload_metadata_config GKE_METADATA is set on all explicit node pools; default node pool is removed
   name     = local.gke_cluster_name
   location = var.region # Regional cluster spans 3 zones automatically
 
@@ -32,12 +36,20 @@ resource "google_container_cluster" "main" {
 
   # ── Security best practices ────────────────────────────────────────────────
 
-  enable_shielded_nodes = true # Equivalent of enable_host_encryption in AKS
+  enable_shielded_nodes       = true # Equivalent of enable_host_encryption in AKS
+  enable_intranode_visibility = true # Enables VPC flow logs for pod-to-pod traffic (CKV_GCP_61)
 
   # Workload Identity — allows GKE pods to use GCP service accounts without keys
   # Equivalent of AKS workload_identity_enabled + oidc_issuer_enabled
   workload_identity_config {
     workload_pool = "${var.gcp_project_id}.svc.id.goog"
+  }
+
+  # Disable client certificate auth — passwords/certs replaced by RBAC + Workload Identity (CKV_GCP_13)
+  master_auth {
+    client_certificate_config {
+      issue_client_certificate = false
+    }
   }
 
   # Binary Authorization — only deploy signed/verified container images
