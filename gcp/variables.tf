@@ -146,3 +146,54 @@ variable "gcs_location" {
   type        = string
   default     = "US-EAST1"
 }
+
+# ── Cloud Data Fusion ─────────────────────────────────────────────────────────
+
+variable "data_fusion_edition" {
+  description = "Cloud Data Fusion edition (DEVELOPER, BASIC, ENTERPRISE)"
+  type        = string
+  default     = "DEVELOPER"
+
+  validation {
+    condition     = contains(["DEVELOPER", "BASIC", "ENTERPRISE"], var.data_fusion_edition)
+    error_message = "Data Fusion edition must be DEVELOPER, BASIC, or ENTERPRISE."
+  }
+}
+
+# ── Cloud Pub/Sub ─────────────────────────────────────────────────────────────
+
+variable "pubsub_message_retention_seconds" {
+  description = "Message retention duration for the Pub/Sub topic in seconds (600–604800)"
+  type        = number
+  default     = 86400
+}
+
+# ── BigQuery ──────────────────────────────────────────────────────────────────
+
+variable "bigquery_dataset_location" {
+  description = "Location for the BigQuery dataset (region or multi-region, e.g. US, EU, us-central1)"
+  type        = string
+  default     = "US"
+}
+
+# ── Cloud Functions v2 ────────────────────────────────────────────────────────
+
+variable "cloudfunctions_runtime" {
+  description = "Runtime for Cloud Functions v2 (e.g. python311, nodejs20)"
+  type        = string
+  default     = "python311"
+}
+
+variable "cloudfunctions_max_instances" {
+  description = "Maximum number of Cloud Functions v2 instances"
+  type        = number
+  default     = 10
+}
+
+# ── Firestore ─────────────────────────────────────────────────────────────────
+
+variable "firestore_location_id" {
+  description = "Location for the Firestore database (e.g. us-central, us-east1, nam5)"
+  type        = string
+  default     = "us-central"
+}

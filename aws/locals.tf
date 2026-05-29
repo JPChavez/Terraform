@@ -31,6 +31,42 @@ locals {
   # EC2
   ec2_name = "${var.project_acronym}-ec2-${var.environment}"
 
+  # AWS Glue — equivalent of Azure Data Factory
+  glue_database_name   = "${var.project_acronym}-glue-db-${var.environment}"
+  glue_job_name        = "${var.project_acronym}-glue-job-${var.environment}"
+  glue_role_name       = "${var.project_acronym}-role-glue-${var.environment}"
+  glue_sec_config_name = "${var.project_acronym}-glue-sec-${var.environment}"
+  kms_alias_glue       = "alias/${var.project_acronym}-key-glue-${var.environment}"
+
+  # Amazon Kinesis — equivalent of Azure Event Hub
+  kinesis_stream_name = "${var.project_acronym}-kin-${var.environment}"
+  kms_alias_kinesis   = "alias/${var.project_acronym}-key-kin-${var.environment}"
+
+  # Amazon Redshift Serverless — equivalent of Azure Synapse Analytics
+  redshift_namespace_name = "${var.project_acronym}-rsns-${var.environment}"
+  redshift_workgroup_name = "${var.project_acronym}-rswg-${var.environment}"
+  redshift_role_name      = "${var.project_acronym}-role-rs-${var.environment}"
+  kms_alias_redshift      = "alias/${var.project_acronym}-key-rs-${var.environment}"
+
+  # AWS Lambda — equivalent of Azure Function App
+  lambda_function_name = "${var.project_acronym}-lambda-${var.environment}"
+  lambda_role_name     = "${var.project_acronym}-role-lambda-${var.environment}"
+  kms_alias_lambda     = "alias/${var.project_acronym}-key-lambda-${var.environment}"
+
+  # Amazon DynamoDB — equivalent of Azure Cosmos DB
+  dynamodb_table_name = "${var.project_acronym}-ddb-${var.environment}"
+  kms_alias_dynamodb  = "alias/${var.project_acronym}-key-ddb-${var.environment}"
+
+  # AWS Step Functions — equivalent of Azure Logic Apps
+  sfn_state_machine_name = "${var.project_acronym}-sfn-${var.environment}"
+  sfn_role_name          = "${var.project_acronym}-role-sfn-${var.environment}"
+
+  # Amazon SageMaker — equivalent of Azure AI Foundry
+  sagemaker_domain_name = "${var.project_acronym}-smd-${var.environment}"
+  sagemaker_role_name   = "${var.project_acronym}-role-sm-${var.environment}"
+  sagemaker_bucket_name = lower("${var.project_acronym}-smd-art-${var.environment}-${data.aws_caller_identity.current.account_id}")
+  kms_alias_sagemaker   = "alias/${var.project_acronym}-key-smml-${var.environment}"
+
   # common_tags are applied to all resources via provider default_tags and explicit tags blocks.
   # Note: AWS tag values are strings; owner spaces are preserved (unlike GCP labels).
   common_tags = {

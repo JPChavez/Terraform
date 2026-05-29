@@ -26,3 +26,19 @@ gke_master_authorized_cidr  = "189.217.80.179/32"
 # Storage — STANDARD + regional (equivalent of Azure ZRS)
 gcs_storage_class = "STANDARD"
 gcs_location      = "US-CENTRAL1"
+
+# Cloud Data Fusion
+data_fusion_edition = "DEVELOPER"
+
+# Cloud Pub/Sub
+pubsub_message_retention_seconds = 86400
+
+# BigQuery
+bigquery_dataset_location = "US"
+
+# Cloud Functions v2
+cloudfunctions_runtime       = "python311"
+cloudfunctions_max_instances = 10
+
+# Firestore
+firestore_location_id = "us-central"

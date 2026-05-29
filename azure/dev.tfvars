@@ -39,3 +39,19 @@ pe_subnet_prefix = "10.0.3.0/24"
 # ACR (extended)
 acr_georeplica_location = ""
 terraform_operator_ip   = "189.217.80.179"
+
+# Event Hub
+eventhub_sku                    = "Standard"
+eventhub_capacity               = 1
+eventhub_message_retention_days = 1
+
+# Synapse Analytics
+synapse_sql_admin_username = "sqladmin"
+
+# Function App
+function_app_sku_name       = "Y1"
+function_app_python_version = "3.11"
+
+# Cosmos DB
+cosmosdb_consistency_level = "Session"
+cosmosdb_kind              = "GlobalDocumentDB"

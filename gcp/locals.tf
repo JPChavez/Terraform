@@ -23,6 +23,32 @@ locals {
   subnet_gke    = "${var.project_acronym}-snet-gke-${var.environment}"
   subnet_system = "${var.project_acronym}-snet-system-${var.environment}"
 
+  # Cloud Data Fusion — equivalent of Azure Data Factory
+  data_fusion_name = "${var.project_acronym}-df-${var.environment}"
+
+  # Cloud Pub/Sub — equivalent of Azure Event Hub
+  pubsub_topic_name        = "${var.project_acronym}-topic-${var.environment}"
+  pubsub_subscription_name = "${var.project_acronym}-sub-${var.environment}"
+
+  # BigQuery — equivalent of Azure Synapse Analytics
+  bigquery_dataset_id = "${var.project_acronym}_bq_${var.environment}"
+
+  # Cloud Functions v2 — equivalent of Azure Function App
+  cf_function_name      = "${var.project_acronym}-func-${var.environment}"
+  cf_source_bucket_name = "${var.project_acronym}-func-src-${var.environment}-${var.gcp_project_id}"
+  cf_sa_name            = "${var.project_acronym}-sa-func-${var.environment}"
+
+  # Firestore — equivalent of Azure Cosmos DB
+  firestore_database_id = "${var.project_acronym}-db-${var.environment}"
+
+  # Cloud Workflows — equivalent of Azure Logic Apps
+  workflow_name    = "${var.project_acronym}-wf-${var.environment}"
+  workflow_sa_name = "${var.project_acronym}-sa-wf-${var.environment}"
+
+  # Vertex AI — equivalent of Azure AI Foundry
+  vertex_ai_sa_name     = "${var.project_acronym}-sa-vai-${var.environment}"
+  vertex_ai_bucket_name = "${var.project_acronym}-vai-${var.environment}-${var.gcp_project_id}"
+
   # GCP labels — equivalent of Azure common_tags (values must be lowercase)
   common_labels = {
     project     = lower(var.project)

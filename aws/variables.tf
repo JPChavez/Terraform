@@ -172,3 +172,83 @@ variable "kms_deletion_window_days" {
     error_message = "KMS deletion window must be between 7 and 30 days."
   }
 }
+
+# ── Amazon Kinesis ────────────────────────────────────────────────────────────
+
+variable "kinesis_shard_count" {
+  description = "Number of shards for the Kinesis data stream"
+  type        = number
+  default     = 1
+}
+
+variable "kinesis_retention_period" {
+  description = "Data retention period for the Kinesis data stream in hours (24–8760)"
+  type        = number
+  default     = 24
+}
+
+# ── Amazon Redshift Serverless ────────────────────────────────────────────────
+
+variable "redshift_admin_username" {
+  description = "Admin username for the Redshift Serverless namespace"
+  type        = string
+  default     = "rsadmin"
+}
+
+variable "redshift_base_capacity_rpus" {
+  description = "Base capacity in Redshift Processing Units (RPUs) for the workgroup (8–512)"
+  type        = number
+  default     = 8
+}
+
+# ── AWS Lambda ────────────────────────────────────────────────────────────────
+
+variable "lambda_runtime" {
+  description = "Runtime for the Lambda function (e.g. python3.11, nodejs20.x)"
+  type        = string
+  default     = "python3.11"
+}
+
+variable "lambda_memory_size" {
+  description = "Memory allocated to the Lambda function in MB"
+  type        = number
+  default     = 128
+}
+
+variable "lambda_timeout" {
+  description = "Timeout for the Lambda function in seconds"
+  type        = number
+  default     = 30
+}
+
+# ── Amazon DynamoDB ───────────────────────────────────────────────────────────
+
+variable "dynamodb_billing_mode" {
+  description = "Billing mode for the DynamoDB table (PAY_PER_REQUEST or PROVISIONED)"
+  type        = string
+  default     = "PAY_PER_REQUEST"
+
+  validation {
+    condition     = contains(["PAY_PER_REQUEST", "PROVISIONED"], var.dynamodb_billing_mode)
+    error_message = "DynamoDB billing mode must be PAY_PER_REQUEST or PROVISIONED."
+  }
+}
+
+variable "dynamodb_hash_key" {
+  description = "Hash key (partition key) attribute name for the DynamoDB table"
+  type        = string
+  default     = "id"
+}
+
+# ── Amazon SageMaker ──────────────────────────────────────────────────────────
+
+variable "sagemaker_auth_mode" {
+  description = "Authentication mode for the SageMaker domain (IAM or SSO)"
+  type        = string
+  default     = "IAM"
+
+  validation {
+    condition     = contains(["IAM", "SSO"], var.sagemaker_auth_mode)
+    error_message = "SageMaker auth mode must be IAM or SSO."
+  }
+}

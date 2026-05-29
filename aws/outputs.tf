@@ -111,3 +111,97 @@ output "ec2_ssm_connect_command" {
   description = "AWS CLI command to connect to the instance via SSM Session Manager"
   value       = "aws ssm start-session --target ${aws_instance.main.id} --region ${var.region}"
 }
+
+# ── AWS Glue ──────────────────────────────────────────────────────────────────
+
+output "glue_database_name" {
+  description = "Name of the Glue Data Catalog database"
+  value       = aws_glue_catalog_database.main.name
+}
+
+output "glue_job_name" {
+  description = "Name of the Glue ETL job"
+  value       = aws_glue_job.main.name
+}
+
+# ── Amazon Kinesis ────────────────────────────────────────────────────────────
+
+output "kinesis_stream_name" {
+  description = "Name of the Kinesis data stream"
+  value       = aws_kinesis_stream.main.name
+}
+
+output "kinesis_stream_arn" {
+  description = "ARN of the Kinesis data stream"
+  value       = aws_kinesis_stream.main.arn
+}
+
+# ── Amazon Redshift Serverless ────────────────────────────────────────────────
+
+output "redshift_namespace_name" {
+  description = "Name of the Redshift Serverless namespace"
+  value       = aws_redshiftserverless_namespace.main.namespace_name
+}
+
+output "redshift_workgroup_name" {
+  description = "Name of the Redshift Serverless workgroup"
+  value       = aws_redshiftserverless_workgroup.main.workgroup_name
+}
+
+output "redshift_endpoint" {
+  description = "Endpoint address of the Redshift Serverless workgroup"
+  value       = aws_redshiftserverless_workgroup.main.endpoint
+}
+
+# ── AWS Lambda ────────────────────────────────────────────────────────────────
+
+output "lambda_function_name" {
+  description = "Name of the Lambda function"
+  value       = aws_lambda_function.main.function_name
+}
+
+output "lambda_function_arn" {
+  description = "ARN of the Lambda function"
+  value       = aws_lambda_function.main.arn
+}
+
+# ── Amazon DynamoDB ───────────────────────────────────────────────────────────
+
+output "dynamodb_table_name" {
+  description = "Name of the DynamoDB table"
+  value       = aws_dynamodb_table.main.name
+}
+
+output "dynamodb_table_arn" {
+  description = "ARN of the DynamoDB table"
+  value       = aws_dynamodb_table.main.arn
+}
+
+# ── AWS Step Functions ────────────────────────────────────────────────────────
+
+output "sfn_state_machine_name" {
+  description = "Name of the Step Functions state machine"
+  value       = aws_sfn_state_machine.main.name
+}
+
+output "sfn_state_machine_arn" {
+  description = "ARN of the Step Functions state machine"
+  value       = aws_sfn_state_machine.main.arn
+}
+
+# ── Amazon SageMaker ──────────────────────────────────────────────────────────
+
+output "sagemaker_domain_id" {
+  description = "ID of the SageMaker domain"
+  value       = aws_sagemaker_domain.main.id
+}
+
+output "sagemaker_domain_arn" {
+  description = "ARN of the SageMaker domain"
+  value       = aws_sagemaker_domain.main.arn
+}
+
+output "sagemaker_artifact_bucket" {
+  description = "Name of the S3 bucket for SageMaker model artifacts"
+  value       = aws_s3_bucket.sagemaker.bucket
+}

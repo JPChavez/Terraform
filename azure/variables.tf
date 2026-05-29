@@ -189,3 +189,74 @@ variable "acr_georeplica_location" {
   type        = string
   default     = ""
 }
+
+# ── Event Hub ─────────────────────────────────────────────────────────────────
+
+variable "eventhub_sku" {
+  description = "SKU for the Event Hub namespace (Basic, Standard, Premium)"
+  type        = string
+  default     = "Standard"
+
+  validation {
+    condition     = contains(["Basic", "Standard", "Premium"], var.eventhub_sku)
+    error_message = "Event Hub SKU must be Basic, Standard, or Premium."
+  }
+}
+
+variable "eventhub_capacity" {
+  description = "Throughput units for the Event Hub namespace"
+  type        = number
+  default     = 1
+}
+
+variable "eventhub_message_retention_days" {
+  description = "Message retention in days for Event Hub (1 for Basic, 1-7 for Standard, 1-90 for Premium)"
+  type        = number
+  default     = 1
+}
+
+# ── Synapse Analytics ─────────────────────────────────────────────────────────
+
+variable "synapse_sql_admin_username" {
+  description = "SQL administrator login name for the Synapse workspace"
+  type        = string
+  default     = "sqladmin"
+}
+
+# ── Function App ──────────────────────────────────────────────────────────────
+
+variable "function_app_sku_name" {
+  description = "SKU for the Function App service plan (Y1 = consumption, EP1/EP2/EP3 = elastic premium)"
+  type        = string
+  default     = "Y1"
+}
+
+variable "function_app_python_version" {
+  description = "Python version for the Function App runtime stack"
+  type        = string
+  default     = "3.11"
+}
+
+# ── Cosmos DB ─────────────────────────────────────────────────────────────────
+
+variable "cosmosdb_consistency_level" {
+  description = "Default consistency level for the Cosmos DB account"
+  type        = string
+  default     = "Session"
+
+  validation {
+    condition     = contains(["Eventual", "ConsistentPrefix", "Session", "BoundedStaleness", "Strong"], var.cosmosdb_consistency_level)
+    error_message = "Cosmos DB consistency level must be one of: Eventual, ConsistentPrefix, Session, BoundedStaleness, Strong."
+  }
+}
+
+variable "cosmosdb_kind" {
+  description = "API type for the Cosmos DB account (GlobalDocumentDB = Core SQL, MongoDB, Table)"
+  type        = string
+  default     = "GlobalDocumentDB"
+
+  validation {
+    condition     = contains(["GlobalDocumentDB", "MongoDB", "Parse", "Table"], var.cosmosdb_kind)
+    error_message = "Cosmos DB kind must be one of: GlobalDocumentDB, MongoDB, Parse, Table."
+  }
+}

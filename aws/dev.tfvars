@@ -31,3 +31,23 @@ s3_lifecycle_expiration_days = 365
 
 # KMS
 kms_deletion_window_days = 30
+
+# Amazon Kinesis
+kinesis_shard_count      = 1
+kinesis_retention_period = 24
+
+# Amazon Redshift Serverless
+redshift_admin_username     = "rsadmin"
+redshift_base_capacity_rpus = 8
+
+# AWS Lambda
+lambda_runtime     = "python3.11"
+lambda_memory_size = 128
+lambda_timeout     = 30
+
+# Amazon DynamoDB
+dynamodb_billing_mode = "PAY_PER_REQUEST"
+dynamodb_hash_key     = "id"
+
+# Amazon SageMaker
+sagemaker_auth_mode = "IAM"
