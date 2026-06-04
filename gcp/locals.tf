@@ -7,8 +7,8 @@ locals {
   gke_node_sa_name = "${var.project_acronym}-sa-gke-${var.environment}"
 
   # GKE Autopilot
-  gke_autopilot_name    = "${var.project_acronym}-gke-ap-${var.environment}"
-  subnet_gke_autopilot  = "${var.project_acronym}-snet-gke-ap-${var.environment}"
+  gke_autopilot_name   = "${var.project_acronym}-gke-ap-${var.environment}"
+  subnet_gke_autopilot = "${var.project_acronym}-snet-gke-ap-${var.environment}"
 
   # Artifact Registry — equivalent of ACR
   ar_repository_id = "${var.project_acronym}-ar-${var.environment}"
