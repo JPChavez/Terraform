@@ -31,6 +31,32 @@ resource "google_compute_subnetwork" "gke" {
   }
 }
 
+# GKE Autopilot subnet — dedicated subnet with its own secondary ranges
+resource "google_compute_subnetwork" "gke_autopilot" {
+  name          = local.subnet_gke_autopilot
+  region        = var.region
+  network       = google_compute_network.main.id
+  ip_cidr_range = var.autopilot_nodes_cidr
+
+  private_ip_google_access = true
+
+  secondary_ip_range {
+    range_name    = "autopilot-pods"
+    ip_cidr_range = var.autopilot_pods_cidr
+  }
+
+  secondary_ip_range {
+    range_name    = "autopilot-services"
+    ip_cidr_range = var.autopilot_services_cidr
+  }
+
+  log_config {
+    aggregation_interval = "INTERVAL_5_SEC"
+    flow_sampling        = 0.5
+    metadata             = "INCLUDE_ALL_METADATA"
+  }
+}
+
 # System subnet — for tooling and operators (equivalent of Azure system subnet)
 resource "google_compute_subnetwork" "system" {
   name          = local.subnet_system
@@ -98,6 +124,8 @@ resource "google_compute_firewall" "allow_internal" {
     var.vpc_cidr,
     var.pods_cidr,
     var.system_subnet_cidr,
+    var.autopilot_nodes_cidr,
+    var.autopilot_pods_cidr,
   ]
 }
 
