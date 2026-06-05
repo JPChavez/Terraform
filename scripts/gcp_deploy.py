@@ -237,6 +237,50 @@ def validate(working_dir: Path, env_name: str) -> None:
 # Etapa 3: Plan
 # ══════════════════════════════════════════════════════════════════════════════
 
+def _try_import_kms_key_ring(working_dir: Path, env_name: str) -> None:
+    """Import existing GCP KMS key ring into state if it exists in GCP but not in state.
+
+    GCP key rings are immutable and cannot be deleted. If a previous partial apply
+    created the key ring, subsequent applies will get a 409. Importing it before
+    the plan ensures Terraform knows the resource already exists.
+    """
+    # Check if already tracked in state
+    result = subprocess.run(
+        ["terraform", "state", "list", "google_kms_key_ring.main"],
+        cwd=working_dir, capture_output=True, text=True,
+    )
+    if "google_kms_key_ring.main" in result.stdout:
+        return  # Already in state — nothing to do
+
+    # Compute key ring ID from tfvars
+    tfvars_path = working_dir / f"{env_name}.tfvars"
+    if not tfvars_path.exists():
+        return
+    tfvars_text = tfvars_path.read_text()
+
+    def _get_var(name: str) -> str:
+        m = re.search(rf'^{name}\s*=\s*"([^"]+)"', tfvars_text, re.MULTILINE)
+        return m.group(1) if m else ""
+
+    project_id      = _get_var("gcp_project_id")
+    region          = _get_var("region")
+    project_acronym = _get_var("project_acronym")
+
+    if not all([project_id, region, project_acronym]):
+        return  # Can't compute key ring ID without these vars
+
+    key_ring_name = f"{project_acronym}-kr-{env_name}"
+    key_ring_id   = f"projects/{project_id}/locations/{region}/keyRings/{key_ring_name}"
+
+    info(f"Verificando KMS KeyRing en state: {key_ring_name}")
+    result = subprocess.run(
+        ["terraform", "import", "google_kms_key_ring.main", key_ring_id],
+        cwd=working_dir, capture_output=True, text=True,
+    )
+    if result.returncode == 0:
+        warn(f"KeyRing '{key_ring_name}' importado al state (existía en GCP sin rastrear).")
+
+
 def plan(working_dir: Path, env_name: str) -> tuple[Path, int]:
     """
     Ejecuta terraform plan y cuenta cuántos recursos serán destruidos.
@@ -256,7 +300,12 @@ def plan(working_dir: Path, env_name: str) -> tuple[Path, int]:
         cwd=working_dir,
     )
 
-    # ── 3b. terraform plan ────────────────────────────────────────────────────
+    # ── 3b. Pre-importar KMS KeyRing si ya existe en GCP pero no en state ────
+    # GCP key rings cannot be deleted. If a previous partial apply created one,
+    # it will be in GCP but not in state, causing a 409 on the next apply.
+    _try_import_kms_key_ring(working_dir, env_name)
+
+    # ── 3c. terraform plan ────────────────────────────────────────────────────
     # -out guarda el plan binario; garantiza que apply ejecuta exactamente
     # lo que se aprobó, sin posibilidad de cambios entre plan y apply.
     plan_file = working_dir / f"{env_name}.tfplan"
@@ -422,34 +471,10 @@ def apply(working_dir: Path, plan_file: Path, env_name: str) -> None:
     info(f"Aplicando plan {plan_file.name} ...")
     # -auto-approve omite la confirmación interactiva propia de Terraform;
     # el script ya solicitó confirmación al usuario en el paso anterior.
-    try:
-        run(
-            ["terraform", "apply", "-auto-approve", plan_file.name],
-            cwd=working_dir,
-        )
-    except subprocess.CalledProcessError as exc:
-        # GCP KeyRings cannot be deleted once created. If a KeyRing exists in GCP
-        # but not in Terraform state (e.g. after state loss), import it and retry.
-        output = (exc.stdout or "") + (exc.stderr or "")
-        kr_match = re.search(
-            r"Error 409.*?(projects/[^/]+/locations/[^/]+/keyRings/\S+?)(?:\.| already)",
-            output,
-        )
-        if kr_match:
-            kr_id = kr_match.group(1).rstrip(".")
-            warn(f"KeyRing ya existe en GCP — importando al state: {kr_id}")
-            run(
-                ["terraform", "import", "google_kms_key_ring.main", kr_id],
-                cwd=working_dir,
-                check=False,
-            )
-            info("Reintentando apply tras importar KeyRing...")
-            run(
-                ["terraform", "apply", "-auto-approve", plan_file.name],
-                cwd=working_dir,
-            )
-        else:
-            raise
+    run(
+        ["terraform", "apply", "-auto-approve", plan_file.name],
+        cwd=working_dir,
+    )
     success("terraform apply completado — infraestructura GCP actualizada.")
 
 
