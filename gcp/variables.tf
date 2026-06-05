@@ -197,3 +197,33 @@ variable "firestore_location_id" {
   type        = string
   default     = "us-central"
 }
+
+# ── Cloud Filestore ───────────────────────────────────────────────────────────
+
+variable "filestore_zone" {
+  description = "Zone for the Filestore instance (BASIC tiers require a zone, e.g. us-east1-b)"
+  type        = string
+  default     = "us-east1-b"
+}
+
+variable "filestore_tier" {
+  description = "Filestore service tier (BASIC_HDD, BASIC_SSD, ENTERPRISE)"
+  type        = string
+  default     = "ZONAL"
+
+  validation {
+    condition     = contains(["BASIC_HDD", "BASIC_SSD", "HIGH_SCALE_SSD", "ENTERPRISE", "ZONAL", "REGIONAL"], var.filestore_tier)
+    error_message = "Invalid Filestore tier."
+  }
+}
+
+variable "filestore_capacity_gb" {
+  description = "Capacity in GB for the Filestore share (BASIC_HDD min 1024, BASIC_SSD min 2560)"
+  type        = number
+  default     = 1024
+
+  validation {
+    condition     = var.filestore_capacity_gb >= 1024
+    error_message = "Filestore capacity must be at least 1024 GB."
+  }
+}

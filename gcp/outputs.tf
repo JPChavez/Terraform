@@ -161,3 +161,20 @@ output "vertex_ai_artifact_bucket" {
   description = "GCS bucket URL for Vertex AI model artifacts"
   value       = google_storage_bucket.vertex_ai.url
 }
+
+# ── Cloud Filestore ───────────────────────────────────────────────────────────
+
+output "filestore_name" {
+  description = "Name of the Filestore instance"
+  value       = google_filestore_instance.main.name
+}
+
+output "filestore_ip_address" {
+  description = "IP address of the Filestore NFS share (use as NFS server in GKE PersistentVolumes)"
+  value       = google_filestore_instance.main.networks[0].ip_addresses[0]
+}
+
+output "filestore_file_share_name" {
+  description = "Name of the Filestore file share (mount path: /<name>)"
+  value       = google_filestore_instance.main.file_shares[0].name
+}

@@ -86,6 +86,7 @@ resource "google_compute_firewall" "deny_all_ingress" {
 
 # Allow all traffic within the VPC (node-to-node, pod-to-pod)
 resource "google_compute_firewall" "allow_internal" {
+  #checkov:skip=CKV2_GCP_12:Internal VPC firewall intentionally allows all protocols; source_ranges restricted to VPC CIDRs only
   name    = "${local.prefix}-allow-internal"
   network = google_compute_network.main.id
 

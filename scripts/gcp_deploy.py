@@ -422,10 +422,34 @@ def apply(working_dir: Path, plan_file: Path, env_name: str) -> None:
     info(f"Aplicando plan {plan_file.name} ...")
     # -auto-approve omite la confirmación interactiva propia de Terraform;
     # el script ya solicitó confirmación al usuario en el paso anterior.
-    run(
-        ["terraform", "apply", "-auto-approve", plan_file.name],
-        cwd=working_dir,
-    )
+    try:
+        run(
+            ["terraform", "apply", "-auto-approve", plan_file.name],
+            cwd=working_dir,
+        )
+    except subprocess.CalledProcessError as exc:
+        # GCP KeyRings cannot be deleted once created. If a KeyRing exists in GCP
+        # but not in Terraform state (e.g. after state loss), import it and retry.
+        output = (exc.stdout or "") + (exc.stderr or "")
+        kr_match = re.search(
+            r"Error 409.*?(projects/[^/]+/locations/[^/]+/keyRings/\S+?)(?:\.| already)",
+            output,
+        )
+        if kr_match:
+            kr_id = kr_match.group(1).rstrip(".")
+            warn(f"KeyRing ya existe en GCP — importando al state: {kr_id}")
+            run(
+                ["terraform", "import", "google_kms_key_ring.main", kr_id],
+                cwd=working_dir,
+                check=False,
+            )
+            info("Reintentando apply tras importar KeyRing...")
+            run(
+                ["terraform", "apply", "-auto-approve", plan_file.name],
+                cwd=working_dir,
+            )
+        else:
+            raise
     success("terraform apply completado — infraestructura GCP actualizada.")
 
 

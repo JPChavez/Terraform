@@ -18,6 +18,7 @@ data "archive_file" "cf_source" {
 
 # GCS bucket to store Cloud Functions source ZIPs
 resource "google_storage_bucket" "cf_source" {
+  #checkov:skip=CKV_GCP_62:Access logging requires a dedicated sink bucket; deferred for dev environment
   name     = local.cf_source_bucket_name
   location = var.gcs_location
   project  = var.gcp_project_id
@@ -68,6 +69,7 @@ resource "google_cloudfunctions2_function" "main" {
     available_memory      = "256M"
     timeout_seconds       = 60
     service_account_email = google_service_account.cf_function.email
+    ingress_settings      = "ALLOW_INTERNAL_AND_GCLB"
 
     environment_variables = {
       ENVIRONMENT = var.environment

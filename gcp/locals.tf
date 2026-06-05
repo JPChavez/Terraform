@@ -45,6 +45,9 @@ locals {
   workflow_name    = "${var.project_acronym}-wf-${var.environment}"
   workflow_sa_name = "${var.project_acronym}-sa-wf-${var.environment}"
 
+  # Cloud Filestore — managed NFS for GKE shared file storage
+  filestore_name = "${var.project_acronym}-fs-${var.environment}"
+
   # Vertex AI — equivalent of Azure AI Foundry
   vertex_ai_sa_name     = "${var.project_acronym}-sa-vai-${var.environment}"
   vertex_ai_bucket_name = "${var.project_acronym}-vai-${var.environment}-${var.gcp_project_id}"

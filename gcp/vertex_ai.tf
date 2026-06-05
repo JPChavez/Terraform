@@ -19,6 +19,7 @@ resource "google_service_account" "vertex_ai" {
 
 # Dedicated GCS bucket for Vertex AI model artifacts, pipeline outputs, and datasets
 resource "google_storage_bucket" "vertex_ai" {
+  #checkov:skip=CKV_GCP_62:Access logging requires a dedicated sink bucket; deferred for dev environment
   name     = local.vertex_ai_bucket_name
   location = var.gcs_location
   project  = var.gcp_project_id

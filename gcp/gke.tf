@@ -138,7 +138,7 @@ resource "google_container_node_pool" "system" {
   node_config {
     machine_type = var.gke_system_machine_type
     disk_type    = "pd-ssd"
-    disk_size_gb = 100
+    disk_size_gb = 150
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
@@ -192,7 +192,7 @@ resource "google_container_node_pool" "user" {
   node_config {
     machine_type = var.gke_user_machine_type
     disk_type    = "pd-ssd"
-    disk_size_gb = 100
+    disk_size_gb = 150
 
     service_account = google_service_account.gke_nodes.email
     oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]

@@ -6,7 +6,9 @@ resource "google_pubsub_topic" "main" {
 
   message_retention_duration = "${var.pubsub_message_retention_seconds}s"
 
-  # Encrypt messages at rest with the existing Cloud KMS storage key
+  # CMEK encryption for messages at rest
+  kms_key_name = google_kms_crypto_key.storage.id
+
   message_storage_policy {
     allowed_persistence_regions = [var.region]
   }
