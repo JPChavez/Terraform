@@ -78,7 +78,7 @@ variable "master_cidr" {
 variable "gke_kubernetes_version" {
   description = "Minimum Kubernetes version for the GKE cluster"
   type        = string
-  default     = "1.32"
+  default     = "1.34"
 }
 
 variable "gke_system_node_count" {
