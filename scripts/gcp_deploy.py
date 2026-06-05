@@ -274,11 +274,15 @@ def _try_import_kms_key_ring(working_dir: Path, env_name: str) -> None:
 
     info(f"Verificando KMS KeyRing en state: {key_ring_name}")
     result = subprocess.run(
-        ["terraform", "import", "google_kms_key_ring.main", key_ring_id],
+        ["terraform", "import",
+         f"-var-file={env_name}.tfvars",
+         "google_kms_key_ring.main", key_ring_id],
         cwd=working_dir, capture_output=True, text=True,
     )
     if result.returncode == 0:
         warn(f"KeyRing '{key_ring_name}' importado al state (existía en GCP sin rastrear).")
+    else:
+        info(f"KeyRing no importado (puede no existir aún en GCP): {result.stderr.strip()[:120]}")
 
 
 def plan(working_dir: Path, env_name: str) -> tuple[Path, int]:
