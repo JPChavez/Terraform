@@ -14,7 +14,7 @@ permissions:
   security-events: write
 
 env:
-  TF_VERSION: '1.7.0'
+  TF_VERSION: '1.9.8'
   WORKING_DIR: gcp
 
 jobs:
@@ -112,6 +112,27 @@ jobs:
       - name: terraform init
         run: terraform init -backend-config="prefix=gcp/dev"
         working-directory: ${{ env.WORKING_DIR }}
+
+      - name: Import existing KMS resources (GCP KMS cannot be deleted)
+        run: |
+          PROJECT_ID=$(grep 'gcp_project_id' dev.tfvars | grep -oP '"\K[^"]+')
+          REGION=$(grep '^region' dev.tfvars | grep -oP '"\K[^"]+')
+          ACRONYM=$(grep 'project_acronym' dev.tfvars | grep -oP '"\K[^"]+')
+          ENV="dev"
+          KR_BASE="projects/${PROJECT_ID}/locations/${REGION}/keyRings/${ACRONYM}-kr-${ENV}"
+          STATE=$(terraform state list 2>/dev/null || true)
+          import_if_missing() {
+            local addr=$1 id=$2
+            if ! echo "$STATE" | grep -q "^${addr}$"; then
+              terraform import -var-file=dev.tfvars "$addr" "$id" 2>/dev/null && echo "Imported: $addr" || true
+            fi
+          }
+          import_if_missing "google_kms_key_ring.main"               "${KR_BASE}"
+          import_if_missing "google_kms_crypto_key.gke"              "${KR_BASE}/cryptoKeys/key-gke-${ACRONYM}-${ENV}"
+          import_if_missing "google_kms_crypto_key.storage"          "${KR_BASE}/cryptoKeys/key-storage-${ACRONYM}-${ENV}"
+          import_if_missing "google_kms_crypto_key.artifact_registry" "${KR_BASE}/cryptoKeys/key-ar-${ACRONYM}-${ENV}"
+        working-directory: ${{ env.WORKING_DIR }}
+        continue-on-error: true
 
       - name: terraform plan
         id: plan
