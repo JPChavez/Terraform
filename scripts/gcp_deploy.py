@@ -237,22 +237,13 @@ def validate(working_dir: Path, env_name: str) -> None:
 # Etapa 3: Plan
 # ══════════════════════════════════════════════════════════════════════════════
 
-def _try_import_kms_key_ring(working_dir: Path, env_name: str) -> None:
-    """Import existing GCP KMS key ring into state if it exists in GCP but not in state.
+def _try_import_kms_resources(working_dir: Path, env_name: str) -> None:
+    """Import existing GCP KMS resources (KeyRing + CryptoKeys) into state if missing.
 
-    GCP key rings are immutable and cannot be deleted. If a previous partial apply
-    created the key ring, subsequent applies will get a 409. Importing it before
-    the plan ensures Terraform knows the resource already exists.
+    GCP KMS resources cannot be deleted. After a partial apply or after a state rm
+    (e.g. for the GCS destroy fix), these resources exist in GCP but not in state,
+    causing 409 on the next apply. Importing before the plan prevents this.
     """
-    # Check if already tracked in state
-    result = subprocess.run(
-        ["terraform", "state", "list", "google_kms_key_ring.main"],
-        cwd=working_dir, capture_output=True, text=True,
-    )
-    if "google_kms_key_ring.main" in result.stdout:
-        return  # Already in state — nothing to do
-
-    # Compute key ring ID from tfvars
     tfvars_path = working_dir / f"{env_name}.tfvars"
     if not tfvars_path.exists():
         return
@@ -267,22 +258,34 @@ def _try_import_kms_key_ring(working_dir: Path, env_name: str) -> None:
     project_acronym = _get_var("project_acronym")
 
     if not all([project_id, region, project_acronym]):
-        return  # Can't compute key ring ID without these vars
+        return
 
+    prefix        = f"{project_acronym}-{env_name}"
     key_ring_name = f"{project_acronym}-kr-{env_name}"
-    key_ring_id   = f"projects/{project_id}/locations/{region}/keyRings/{key_ring_name}"
+    kr_base       = f"projects/{project_id}/locations/{region}/keyRings/{key_ring_name}"
 
-    info(f"Verificando KMS KeyRing en state: {key_ring_name}")
-    result = subprocess.run(
-        ["terraform", "import",
-         f"-var-file={env_name}.tfvars",
-         "google_kms_key_ring.main", key_ring_id],
-        cwd=working_dir, capture_output=True, text=True,
-    )
-    if result.returncode == 0:
-        warn(f"KeyRing '{key_ring_name}' importado al state (existía en GCP sin rastrear).")
-    else:
-        info(f"KeyRing no importado (puede no existir aún en GCP): {result.stderr.strip()[:120]}")
+    # Resources to check: (tf_address, gcp_id)
+    candidates = [
+        ("google_kms_key_ring.main",               kr_base),
+        ("google_kms_crypto_key.gke",              f"{kr_base}/cryptoKeys/key-gke-{prefix}"),
+        ("google_kms_crypto_key.storage",          f"{kr_base}/cryptoKeys/key-storage-{prefix}"),
+        ("google_kms_crypto_key.artifact_registry", f"{kr_base}/cryptoKeys/key-ar-{prefix}"),
+    ]
+
+    # Get current state list once
+    state_list = subprocess.run(
+        ["terraform", "state", "list"], cwd=working_dir, capture_output=True, text=True,
+    ).stdout
+
+    for tf_addr, gcp_id in candidates:
+        if tf_addr in state_list:
+            continue  # Already tracked
+        result = subprocess.run(
+            ["terraform", "import", f"-var-file={env_name}.tfvars", tf_addr, gcp_id],
+            cwd=working_dir, capture_output=True, text=True,
+        )
+        if result.returncode == 0:
+            warn(f"KMS importado al state: {tf_addr}")
 
 
 def plan(working_dir: Path, env_name: str) -> tuple[Path, int]:
@@ -304,10 +307,10 @@ def plan(working_dir: Path, env_name: str) -> tuple[Path, int]:
         cwd=working_dir,
     )
 
-    # ── 3b. Pre-importar KMS KeyRing si ya existe en GCP pero no en state ────
-    # GCP key rings cannot be deleted. If a previous partial apply created one,
-    # it will be in GCP but not in state, causing a 409 on the next apply.
-    _try_import_kms_key_ring(working_dir, env_name)
+    # ── 3b. Pre-importar KMS resources si existen en GCP pero no en state ────
+    # GCP KMS resources cannot be deleted. After a partial apply or state rm,
+    # they exist in GCP but not in state, causing 409 on the next apply.
+    _try_import_kms_resources(working_dir, env_name)
 
     # ── 3c. terraform plan ────────────────────────────────────────────────────
     # -out guarda el plan binario; garantiza que apply ejecuta exactamente
