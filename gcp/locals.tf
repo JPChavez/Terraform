@@ -54,7 +54,7 @@ locals {
 
   # GCP labels — equivalent of Azure common_tags (values must be lowercase)
   common_labels = {
-    project     = lower(var.project)
+    project     = replace(lower(var.project), " ", "-")
     environment = var.environment
     region      = var.region
     owner       = replace(lower(var.owner), " ", "-")
