@@ -75,47 +75,6 @@ variable "master_cidr" {
 
 # ── GKE ──────────────────────────────────────────────────────────────────────
 
-variable "gke_kubernetes_version" {
-  description = "Minimum Kubernetes version for the GKE cluster"
-  type        = string
-  default     = "1.34"
-}
-
-variable "gke_system_node_count" {
-  description = "Number of nodes in the GKE system node pool (per zone)"
-  type        = number
-  default     = 1
-}
-
-variable "gke_system_machine_type" {
-  description = "Machine type for the GKE system node pool (Azure D2s_v3 equivalent: n2-standard-2)"
-  type        = string
-  default     = "n2-standard-2"
-}
-
-variable "gke_user_min_count" {
-  description = "Minimum number of nodes in the GKE user node pool (per zone)"
-  type        = number
-  default     = 1
-}
-
-variable "gke_user_max_count" {
-  description = "Maximum number of nodes in the GKE user node pool (per zone)"
-  type        = number
-  default     = 3
-}
-
-variable "gke_user_machine_type" {
-  description = "Machine type for the GKE user node pool (Azure D4s_v3 equivalent: n2-standard-4)"
-  type        = string
-  default     = "n2-standard-4"
-}
-
-variable "gke_node_locations" {
-  description = "Specific zones within the region to place GKE nodes. Subset the region zones to avoid GCE_STOCKOUT."
-  type        = list(string)
-}
-
 variable "gke_private_cluster_enabled" {
   description = "Enable private nodes for GKE (nodes have no public IPs)"
   type        = bool

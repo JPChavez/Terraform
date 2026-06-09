@@ -4,7 +4,6 @@ locals {
 
   # GKE
   gke_cluster_name = "${var.project_acronym}-gke-${var.environment}"
-  gke_node_sa_name = "${var.project_acronym}-sa-gke-${var.environment}"
 
   # Artifact Registry — equivalent of ACR
   ar_repository_id = "${var.project_acronym}-ar-${var.environment}"
