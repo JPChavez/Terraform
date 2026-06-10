@@ -25,6 +25,33 @@ output "gke_oidc_issuer_url" {
   value       = "https://container.googleapis.com/v1/projects/${var.gcp_project_id}/locations/${var.region}/clusters/${google_container_cluster.main.name}"
 }
 
+# ── GKE Autopilot ─────────────────────────────────────────────────────────────
+
+output "gke_autopilot_cluster_name" {
+  description = "Name of the GKE Autopilot cluster"
+  value       = google_container_cluster.autopilot.name
+}
+
+output "gke_autopilot_cluster_id" {
+  description = "Resource ID of the GKE Autopilot cluster"
+  value       = google_container_cluster.autopilot.id
+}
+
+output "gke_autopilot_kube_config_command" {
+  description = "gcloud command to fetch GKE Autopilot credentials"
+  value       = "gcloud container clusters get-credentials ${google_container_cluster.autopilot.name} --region ${var.region} --project ${var.gcp_project_id}"
+}
+
+output "gke_autopilot_workload_identity_pool" {
+  description = "Workload Identity pool for the GKE Autopilot cluster"
+  value       = "${var.gcp_project_id}.svc.id.goog"
+}
+
+output "gke_autopilot_oidc_issuer_url" {
+  description = "OIDC issuer URL for the GKE Autopilot cluster"
+  value       = "https://container.googleapis.com/v1/projects/${var.gcp_project_id}/locations/${var.region}/clusters/${google_container_cluster.autopilot.name}"
+}
+
 # ── Artifact Registry ─────────────────────────────────────────────────────────
 
 output "artifact_registry_name" {

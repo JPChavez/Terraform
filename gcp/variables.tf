@@ -128,6 +128,44 @@ variable "gke_master_authorized_cidr" {
   default     = "0.0.0.0/0"
 }
 
+# ── GKE Autopilot ─────────────────────────────────────────────────────────────
+
+variable "autopilot_nodes_cidr" {
+  description = "Primary CIDR for the GKE Autopilot nodes subnet"
+  type        = string
+  default     = "10.1.1.0/24"
+}
+
+variable "autopilot_pods_cidr" {
+  description = "Secondary CIDR for GKE Autopilot pod IP allocation (alias range)"
+  type        = string
+  default     = "10.20.0.0/14"
+}
+
+variable "autopilot_services_cidr" {
+  description = "Secondary CIDR for GKE Autopilot service IP allocation (alias range)"
+  type        = string
+  default     = "10.24.0.0/20"
+}
+
+variable "gke_autopilot_private_cluster_enabled" {
+  description = "Enable private nodes for the GKE Autopilot cluster (nodes have no public IPs)"
+  type        = bool
+  default     = false
+}
+
+variable "gke_autopilot_master_authorized_cidr" {
+  description = "CIDR block authorized to access the GKE Autopilot API server"
+  type        = string
+  default     = "0.0.0.0/0"
+}
+
+variable "gke_autopilot_master_cidr" {
+  description = "CIDR for the GKE Autopilot control plane (/28 required by GCP, must not overlap with gke_master_cidr)"
+  type        = string
+  default     = "172.16.0.16/28"
+}
+
 # ── Storage ───────────────────────────────────────────────────────────────────
 
 variable "gcs_storage_class" {

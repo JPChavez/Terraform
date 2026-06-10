@@ -2,9 +2,13 @@ locals {
   # Naming convention mirrors Azure: <project_acronym>-<resource>-<environment>
   prefix = "${var.project_acronym}-${var.environment}"
 
-  # GKE
+  # GKE Standard
   gke_cluster_name = "${var.project_acronym}-gke-${var.environment}"
   gke_node_sa_name = "${var.project_acronym}-sa-gke-${var.environment}"
+
+  # GKE Autopilot
+  gke_autopilot_name   = "${var.project_acronym}-gke-ap-${var.environment}"
+  subnet_gke_autopilot = "${var.project_acronym}-snet-gke-ap-${var.environment}"
 
   # Artifact Registry — equivalent of ACR
   ar_repository_id = "${var.project_acronym}-ar-${var.environment}"

@@ -23,6 +23,14 @@ gke_node_locations          = ["us-east1-b", "us-east1-c"]
 gke_private_cluster_enabled = false
 gke_master_authorized_cidr  = "189.217.80.179/32"
 
+# GKE Autopilot — dedicated CIDRs to avoid overlap with standard GKE (10.0.x / 10.4-8.x)
+autopilot_nodes_cidr                  = "10.1.1.0/24"
+autopilot_pods_cidr                   = "10.20.0.0/14"
+autopilot_services_cidr               = "10.24.0.0/20"
+gke_autopilot_private_cluster_enabled = false
+gke_autopilot_master_authorized_cidr  = "189.217.80.179/32"
+gke_autopilot_master_cidr             = "172.16.0.16/28"
+
 # Storage — STANDARD + regional (equivalent of Azure ZRS)
 gcs_storage_class = "STANDARD"
 gcs_location      = "US-CENTRAL1"
